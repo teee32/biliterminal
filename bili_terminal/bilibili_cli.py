@@ -25,7 +25,8 @@ from typing import Any
 
 
 DEFAULT_TIMEOUT = 15
-DEFAULT_HISTORY_PATH = ".omx/state/bilibili-cli-history.json"
+DEFAULT_STATE_DIR = ".omx/state"
+DEFAULT_HISTORY_FILENAME = "bilibili-cli-history.json"
 MAX_HISTORY_ITEMS = 40
 DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -247,6 +248,20 @@ def centered_x(total_width: int, text: str, min_x: int = 0) -> int:
     return max(min_x, (total_width - display_width(text)) // 2)
 
 
+def default_state_dir() -> str:
+    state_dir = os.environ.get("BILITERMINAL_STATE_DIR", "").strip()
+    if state_dir:
+        return os.path.expanduser(state_dir)
+    home_dir = os.environ.get("BILITERMINAL_HOME", "").strip()
+    if home_dir:
+        return os.path.join(os.path.expanduser(home_dir), "state")
+    return DEFAULT_STATE_DIR
+
+
+def default_history_path() -> str:
+    return os.path.join(default_state_dir(), DEFAULT_HISTORY_FILENAME)
+
+
 def shorten(value: str, width: int = 96) -> str:
     return truncate_display(value, width)
 
@@ -374,8 +389,8 @@ def item_to_history_payload(item: VideoItem) -> dict[str, Any]:
 
 
 class HistoryStore:
-    def __init__(self, path: str = DEFAULT_HISTORY_PATH, max_items: int = MAX_HISTORY_ITEMS) -> None:
-        self.path = path
+    def __init__(self, path: str | None = None, max_items: int = MAX_HISTORY_ITEMS) -> None:
+        self.path = path or default_history_path()
         self.max_items = max_items
         self._data: dict[str, list[Any]] = {
             "recent_keywords": [],

@@ -1,5 +1,6 @@
 import io
 import json
+import os
 import tempfile
 import unittest
 from unittest import mock
@@ -472,6 +473,31 @@ class HistoryStoreTests(unittest.TestCase):
                 json.dump({"recent_keywords": ["ä¸­æ", "ã, æ", "原神"], "recent_videos": []}, handle, ensure_ascii=False)
             store = cli.HistoryStore(path=path)
             self.assertEqual(store.get_recent_keywords(5), ["中文", "原神"])
+
+    def test_default_history_path_uses_explicit_state_dir_env(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with mock.patch.dict(os.environ, {"BILITERMINAL_STATE_DIR": temp_dir}, clear=False):
+                self.assertEqual(
+                    cli.default_history_path(),
+                    os.path.join(temp_dir, "bilibili-cli-history.json"),
+                )
+
+    def test_default_history_path_uses_home_dir_env(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with mock.patch.dict(os.environ, {"BILITERMINAL_HOME": temp_dir}, clear=False):
+                self.assertEqual(
+                    cli.default_history_path(),
+                    os.path.join(temp_dir, "state", "bilibili-cli-history.json"),
+                )
+
+    def test_history_store_uses_dynamic_default_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with mock.patch.dict(os.environ, {"BILITERMINAL_HOME": temp_dir}, clear=False):
+                store = cli.HistoryStore()
+                self.assertEqual(
+                    store.path,
+                    os.path.join(temp_dir, "state", "bilibili-cli-history.json"),
+                )
 
 
 class TUIStateTests(unittest.TestCase):

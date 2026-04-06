@@ -1,10 +1,15 @@
-# Bilibili CLI
+# BiliTerminal
 
 把 Bilibili 常用网页浏览动作搬到终端里。
 
 ## 快速启动
 
-最快一条命令：
+macOS 双击版：
+
+- 直接下载：<https://github.com/teee32/biliterminal/releases/latest/download/BiliTerminal-macOS.zip>
+- 解压后双击 `BiliTerminal.app`
+
+源码启动：
 
 ```bash
 git clone https://github.com/teee32/biliterminal.git && cd biliterminal && ./biliterminal
@@ -29,6 +34,13 @@ git clone https://github.com/teee32/biliterminal.git && cd biliterminal && ./bil
 ```bash
 python3 -m bili_terminal tui
 ./bili_terminal/start.sh
+```
+
+自己构建 macOS 双击版：
+
+```bash
+./bili_terminal/build_macos_app.sh
+open dist/BiliTerminal.app
 ```
 
 这个实现基于对 Bilibili 网页公开接口的逆向观察，当前覆盖 3 个核心能力：
@@ -64,6 +76,33 @@ python3 -m bili_terminal recommend -n 5
 python3 -m bili_terminal tui
 python3 -m unittest discover -s bili_terminal/tests -v
 ```
+
+## macOS 双击运行
+
+直接下载 release：
+
+- <https://github.com/teee32/biliterminal/releases/latest/download/BiliTerminal-macOS.zip>
+
+自己构建应用包：
+
+```bash
+./bili_terminal/build_macos_app.sh
+```
+
+构建完成后会生成两个产物：
+
+- `dist/BiliTerminal.app`
+- `dist/BiliTerminal-macOS.zip`
+
+本机直接双击 `dist/BiliTerminal.app` 即可，或者命令行执行：
+
+```bash
+open dist/BiliTerminal.app
+```
+
+如果要发给别人，直接把 `dist/BiliTerminal-macOS.zip` 发过去，解压后双击 `.app`。
+
+当前双击版仍需要目标机器能找到 `python3`。启动日志会写到 `~/.biliterminal/launcher.log`。
 
 ## REPL 示例
 
@@ -105,7 +144,8 @@ python3 -m unittest discover -s bili_terminal/tests -v
 ## 说明
 
 - CLI 会为接口补齐浏览器请求头，降低被风控 412 的概率。
-- 搜索词和最近浏览视频会落到 `.omx/state/bilibili-cli-history.json`，供 `history` 命令和 TUI 历史视图复用。
+- 仓库内直接运行时，搜索词和最近浏览视频会落到 `.omx/state/bilibili-cli-history.json`。
+- 双击版会把历史写到 `~/.biliterminal/state/bilibili-cli-history.json`，并把启动日志写到 `~/.biliterminal/launcher.log`。
 - 这是一个终端浏览器，不是下载器，也没有实现登录态、投稿、评论发送、弹幕发送等需要更高权限的功能。
 - 目前默认聚焦视频内容，不处理直播、课程、专栏、动态等其他内容类型。
 - 终端版已经接入首页推荐、热搜、默认搜索词、入站必刷与分区榜单，但因为 curses 终端没有图片、瀑布流和登录态组件，所以还不是官网像素级复刻。
