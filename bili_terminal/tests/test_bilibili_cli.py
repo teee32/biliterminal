@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -110,8 +111,8 @@ class FormattingTests(unittest.TestCase):
             ),
             width=40,
         )
-        self.assertIn("UP主: UP", lines)
-        self.assertIn("简介:", lines)
+        self.assertIn("👤 UP主: UP", lines)
+        self.assertIn("📝 简介:", lines)
 
     def test_item_to_history_payload_drops_large_raw_fields(self) -> None:
         payload = cli.item_to_history_payload(
@@ -366,6 +367,15 @@ class ShellTests(unittest.TestCase):
         args = cli.build_parser().parse_args(["history"])
         self.assertEqual(args.command, "history")
 
+    def test_parser_supports_favorite_command(self) -> None:
+        args = cli.build_parser().parse_args(["favorite", "BV1xx411c7mu"])
+        self.assertEqual(args.command, "favorite")
+
+    def test_parser_supports_favorites_open_command(self) -> None:
+        args = cli.build_parser().parse_args(["favorites", "open", "1"])
+        self.assertEqual(args.command, "favorites")
+        self.assertEqual(args.favorites_action, "open")
+
     def test_parser_supports_tui_command(self) -> None:
         args = cli.build_parser().parse_args(["tui"])
         self.assertEqual(args.command, "tui")
@@ -428,6 +438,26 @@ class ShellTests(unittest.TestCase):
         url = cli.open_video_target("BV1xx411c7mu")
         self.assertEqual(url, "https://www.bilibili.com/video/BV1xx411c7mu")
         mock_open.assert_called_once_with("https://www.bilibili.com/video/BV1xx411c7mu")
+
+    def test_resolve_favorite_item_by_index(self) -> None:
+        shell = cli.BilibiliCLI(cli.BilibiliClient(), self.make_store())
+        item = cli.VideoItem(
+            title="标题",
+            author="UP",
+            bvid="BV1xx411c7mu",
+            aid=106,
+            duration="1:00",
+            play=1,
+            danmaku=2,
+            like=3,
+            favorite=4,
+            pubdate=1710000000,
+            description="",
+            url="https://www.bilibili.com/video/BV1xx411c7mu",
+            raw={},
+        )
+        shell.history_store.add_favorite(item)
+        self.assertEqual(shell._resolve_favorite_item("1").bvid, "BV1xx411c7mu")
 
 
 class HistoryStoreTests(unittest.TestCase):
@@ -499,6 +529,32 @@ class HistoryStoreTests(unittest.TestCase):
                     os.path.join(temp_dir, "state", "bilibili-cli-history.json"),
                 )
 
+    def test_history_store_persists_favorites(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = f"{temp_dir}/history.json"
+            store = cli.HistoryStore(path=path)
+            store.add_favorite(self.make_item("收藏视频"))
+
+            reloaded = cli.HistoryStore(path=path)
+            self.assertEqual(reloaded.get_favorite_videos(1)[0].title, "收藏视频")
+
+    def test_history_store_remove_favorite(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = cli.HistoryStore(path=f"{temp_dir}/history.json")
+            item = self.make_item("收藏视频")
+            store.add_favorite(item)
+            self.assertTrue(store.remove_favorite(item))
+            self.assertEqual(store.get_favorite_videos(), [])
+
+    def test_history_store_toggle_favorite(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = cli.HistoryStore(path=f"{temp_dir}/history.json")
+            item = self.make_item("收藏视频")
+            self.assertTrue(store.toggle_favorite(item))
+            self.assertTrue(store.is_favorite(item))
+            self.assertFalse(store.toggle_favorite(item))
+            self.assertFalse(store.is_favorite(item))
+
 
 class TUIStateTests(unittest.TestCase):
     def make_item(self, title: str = "标题", bvid: str = "BV1xx411c7mu") -> cli.VideoItem:
@@ -527,6 +583,56 @@ class TUIStateTests(unittest.TestCase):
             tui.load_items()
             self.assertEqual(len(tui.items), 1)
             self.assertEqual(tui.items[0].bvid, "BV1xx411c7mu")
+
+    def test_load_items_uses_favorites_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = cli.HistoryStore(path=f"{temp_dir}/history.json")
+            store.add_favorite(self.make_item("收藏稿件"))
+            tui = cli.BilibiliTUI(cli.BilibiliClient(), store)
+            tui.mode = "favorites"
+            tui.load_items()
+            self.assertEqual(len(tui.items), 1)
+            self.assertEqual(tui.items[0].title, "收藏稿件")
+
+    def test_init_theme_prefers_bilibili_pink(self) -> None:
+        class FakeCurses:
+            COLOR_BLACK = 0
+            COLOR_WHITE = 7
+            COLOR_MAGENTA = 5
+            COLORS = 16
+            error = RuntimeError
+
+            def __init__(self) -> None:
+                self.calls: list[tuple[object, ...]] = []
+
+            def has_colors(self) -> bool:
+                return True
+
+            def start_color(self) -> None:
+                self.calls.append(("start_color",))
+
+            def use_default_colors(self) -> None:
+                self.calls.append(("use_default_colors",))
+
+            def can_change_color(self) -> bool:
+                return True
+
+            def init_color(self, color: int, r: int, g: int, b: int) -> None:
+                self.calls.append(("init_color", color, r, g, b))
+
+            def init_pair(self, pair: int, fg: int, bg: int) -> None:
+                self.calls.append(("init_pair", pair, fg, bg))
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fake_curses = FakeCurses()
+            store = cli.HistoryStore(path=f"{temp_dir}/history.json")
+            tui = cli.BilibiliTUI(cli.BilibiliClient(), store)
+            with mock.patch.dict(sys.modules, {"curses": fake_curses}):
+                tui.init_theme()
+            self.assertIn(("init_color", 13, *cli.BILIBILI_PINK_RGB), fake_curses.calls)
+            self.assertIn(("init_pair", 1, fake_curses.COLOR_WHITE, 13), fake_curses.calls)
+            self.assertIn(("init_pair", 4, fake_curses.COLOR_BLACK, 13), fake_curses.calls)
+            self.assertTrue(tui.use_colors)
 
     def test_load_items_uses_home_recommend_channel(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -612,6 +718,109 @@ class TUIStateTests(unittest.TestCase):
             tui.refresh_comments()
             tui.ensure_comments_for_selected.assert_called_once_with(force=True)
             self.assertIn("评论加载失败", tui.status)
+
+    def test_toggle_selected_favorite_adds_item(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = cli.HistoryStore(path=f"{temp_dir}/history.json")
+            tui = cli.BilibiliTUI(cli.BilibiliClient(), store)
+            tui.items = [self.make_item("收藏目标")]
+            tui.toggle_selected_favorite()
+            self.assertEqual(store.get_favorite_videos(1)[0].title, "收藏目标")
+            self.assertIn("已收藏", tui.status)
+
+    def test_toggle_selected_favorite_refreshes_favorites_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = cli.HistoryStore(path=f"{temp_dir}/history.json")
+            item = self.make_item("收藏目标")
+            store.add_favorite(item)
+            tui = cli.BilibiliTUI(cli.BilibiliClient(), store)
+            tui.mode = "favorites"
+            tui.items = [item]
+            tui.load_items = mock.MagicMock()
+            tui.toggle_selected_favorite()
+            tui.load_items.assert_called_once()
+            self.assertIn("已取消收藏", tui.status)
+
+    def test_mode_token_uses_favorites_label(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = cli.HistoryStore(path=f"{temp_dir}/history.json")
+            tui = cli.BilibiliTUI(cli.BilibiliClient(), store)
+            tui.mode = "favorites"
+            self.assertEqual(tui.mode_token(), "收藏夹")
+
+    def test_draw_featured_card_compact_marks_favorite(self) -> None:
+        class FakeScreen:
+            def __init__(self) -> None:
+                self.lines: list[str] = []
+
+            def derwin(self, *_args, **_kwargs) -> "FakeScreen":
+                return self
+
+            def box(self) -> None:
+                return None
+
+            def addnstr(self, _y: int, _x: int, text: str, *_args) -> None:
+                self.lines.append(text)
+
+            def addstr(self, _y: int, _x: int, text: str, *_args) -> None:
+                self.lines.append(text)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = cli.HistoryStore(path=f"{temp_dir}/history.json")
+            item = self.make_item("收藏卡片")
+            store.add_favorite(item)
+            tui = cli.BilibiliTUI(cli.BilibiliClient(), store)
+            fake = FakeScreen()
+            tui.draw_featured_card(fake, 0, 0, 8, 40, item, selected=False)
+            rendered = " ".join(fake.lines)
+            self.assertIn("★ 收藏卡片", rendered)
+
+    def test_draw_uses_favorites_view_in_favorites_mode(self) -> None:
+        import curses
+
+        class FakeScreen:
+            def erase(self) -> None:
+                return None
+
+            def getmaxyx(self) -> tuple[int, int]:
+                return (32, 120)
+
+            def addnstr(self, *_args, **_kwargs) -> None:
+                return None
+
+            def hline(self, *_args, **_kwargs) -> None:
+                return None
+
+            def refresh(self) -> None:
+                return None
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = cli.HistoryStore(path=f"{temp_dir}/history.json")
+            tui = cli.BilibiliTUI(cli.BilibiliClient(), store)
+            tui.mode = "favorites"
+            tui.draw_favorites_view = mock.MagicMock()
+            tui.draw_split_view = mock.MagicMock()
+            with mock.patch.object(curses, "ACS_HLINE", "-", create=True):
+                tui.draw(FakeScreen())
+            tui.draw_favorites_view.assert_called_once()
+            tui.draw_split_view.assert_not_called()
+
+    def test_draw_favorites_list_renders_empty_hint(self) -> None:
+        class FakeScreen:
+            def __init__(self) -> None:
+                self.lines: list[str] = []
+
+            def addnstr(self, _y: int, _x: int, text: str, *_args) -> None:
+                self.lines.append(text)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = cli.HistoryStore(path=f"{temp_dir}/history.json")
+            tui = cli.BilibiliTUI(cli.BilibiliClient(), store)
+            fake = FakeScreen()
+            tui.draw_favorites_list(fake, 0, 0, 10, 42)
+            rendered = " ".join(fake.lines)
+            self.assertIn("收藏夹还是空的", rendered)
+            self.assertIn("按 f", rendered)
 
     def test_draw_split_view_renders_comments_panel_when_height_allows(self) -> None:
         import curses

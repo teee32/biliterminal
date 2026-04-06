@@ -28,6 +28,8 @@ DEFAULT_TIMEOUT = 15
 DEFAULT_STATE_DIR = ".omx/state"
 DEFAULT_HISTORY_FILENAME = "bilibili-cli-history.json"
 MAX_HISTORY_ITEMS = 40
+MAX_FAVORITE_ITEMS = 200
+BILIBILI_PINK_RGB = (984, 447, 600)
 DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36"
@@ -388,13 +390,41 @@ def item_to_history_payload(item: VideoItem) -> dict[str, Any]:
     }
 
 
+def video_key_from_payload(payload: dict[str, Any]) -> str | None:
+    bvid = payload.get("bvid")
+    if bvid:
+        return str(bvid)
+    aid = payload.get("aid")
+    if aid not in (None, ""):
+        return f"av{aid}"
+    url = payload.get("url")
+    return str(url) if url else None
+
+
+def video_key_from_item(item: VideoItem | None) -> str | None:
+    if item is None:
+        return None
+    return video_key_from_payload(item_to_history_payload(item))
+
+
+def video_key_from_ref(ref_type: str, value: str) -> str:
+    return value if ref_type == "bvid" else f"av{value}"
+
+
 class HistoryStore:
-    def __init__(self, path: str | None = None, max_items: int = MAX_HISTORY_ITEMS) -> None:
+    def __init__(
+        self,
+        path: str | None = None,
+        max_items: int = MAX_HISTORY_ITEMS,
+        max_favorites: int = MAX_FAVORITE_ITEMS,
+    ) -> None:
         self.path = path or default_history_path()
         self.max_items = max_items
+        self.max_favorites = max_favorites
         self._data: dict[str, list[Any]] = {
             "recent_keywords": [],
             "recent_videos": [],
+            "favorite_videos": [],
         }
         self.load()
 
@@ -410,6 +440,7 @@ class HistoryStore:
         if isinstance(payload, dict):
             keywords = payload.get("recent_keywords")
             videos = payload.get("recent_videos")
+            favorites = payload.get("favorite_videos")
             if isinstance(keywords, list):
                 normalized_keywords: list[str] = []
                 for item in keywords:
@@ -424,6 +455,20 @@ class HistoryStore:
                 self._data["recent_keywords"] = normalized_keywords[: self.max_items]
             if isinstance(videos, list):
                 self._data["recent_videos"] = [item for item in videos if isinstance(item, dict)][: self.max_items]
+            if isinstance(favorites, list):
+                normalized_favorites: list[dict[str, Any]] = []
+                seen_keys: set[str] = set()
+                for item in favorites:
+                    if not isinstance(item, dict):
+                        changed = True
+                        continue
+                    key = video_key_from_payload(item)
+                    if key is None or key in seen_keys:
+                        changed = True
+                        continue
+                    seen_keys.add(key)
+                    normalized_favorites.append(item)
+                self._data["favorite_videos"] = normalized_favorites[: self.max_favorites]
         if changed:
             self.save()
 
@@ -445,17 +490,57 @@ class HistoryStore:
 
     def add_video(self, item: VideoItem) -> None:
         payload = item_to_history_payload(item)
-        key = payload.get("bvid") or payload.get("aid") or payload.get("url")
-        videos = [video for video in self._data["recent_videos"] if (video.get("bvid") or video.get("aid") or video.get("url")) != key]
+        key = video_key_from_payload(payload)
+        videos = [video for video in self._data["recent_videos"] if video_key_from_payload(video) != key]
         videos.insert(0, payload)
         self._data["recent_videos"] = videos[: self.max_items]
         self.save()
+
+    def add_favorite(self, item: VideoItem) -> bool:
+        payload = item_to_history_payload(item)
+        key = video_key_from_payload(payload)
+        if key is None:
+            return False
+        favorites = [video for video in self._data["favorite_videos"] if video_key_from_payload(video) != key]
+        already_exists = len(favorites) != len(self._data["favorite_videos"])
+        favorites.insert(0, payload)
+        self._data["favorite_videos"] = favorites[: self.max_favorites]
+        self.save()
+        return not already_exists
+
+    def remove_favorite(self, target: VideoItem | str) -> bool:
+        key = target if isinstance(target, str) else video_key_from_item(target)
+        if key is None:
+            return False
+        favorites = [video for video in self._data["favorite_videos"] if video_key_from_payload(video) != key]
+        changed = len(favorites) != len(self._data["favorite_videos"])
+        if changed:
+            self._data["favorite_videos"] = favorites
+            self.save()
+        return changed
+
+    def toggle_favorite(self, item: VideoItem) -> bool:
+        if self.is_favorite(item):
+            self.remove_favorite(item)
+            return False
+        self.add_favorite(item)
+        return True
+
+    def is_favorite(self, item: VideoItem | None) -> bool:
+        key = video_key_from_item(item)
+        if key is None:
+            return False
+        return any(video_key_from_payload(video) == key for video in self._data["favorite_videos"])
 
     def get_recent_keywords(self, limit: int = 10) -> list[str]:
         return list(self._data["recent_keywords"][:limit])
 
     def get_recent_videos(self, limit: int = 20) -> list[VideoItem]:
         return [item_from_payload(payload) for payload in self._data["recent_videos"][:limit]]
+
+    def get_favorite_videos(self, limit: int | None = None) -> list[VideoItem]:
+        payloads = self._data["favorite_videos"] if limit is None else self._data["favorite_videos"][:limit]
+        return [item_from_payload(payload) for payload in payloads]
 
 
 class BilibiliClient:
@@ -705,7 +790,7 @@ class BilibiliCLI(cmd.Cmd):
     intro = (
         "Bilibili CLI 已启动。\n"
         "可用命令: hot [页码] [数量], search <关键词> [页码] [数量], "
-        "video <BV号|av号|URL|序号>, open <序号|BV号|URL>, exit"
+        "video <BV号|av号|URL|序号>, favorite <序号|BV号|URL>, favorites [open|remove], open <序号|BV号|URL>, exit"
     )
     prompt = "bili> "
 
@@ -753,7 +838,38 @@ class BilibiliCLI(cmd.Cmd):
         print_video_detail(item)
 
     def do_history(self, _: str) -> None:
+        self.last_items = self.history_store.get_recent_videos(10)
         print_history(self.history_store)
+
+    def do_favorite(self, arg: str) -> None:
+        if not arg.strip():
+            print("用法: favorite <序号|BV号|av号|URL>")
+            return
+        item = self._resolve_item_for_favorite(arg.strip())
+        added = self.history_store.add_favorite(item)
+        status = "已收藏" if added else "收藏夹已更新"
+        print(f"{status}: {item.title}")
+
+    def do_favorites(self, arg: str) -> None:
+        parts = shlex.split(arg)
+        if not parts:
+            favorites = self.history_store.get_favorite_videos()
+            self.last_items = favorites
+            print_favorites(self.history_store)
+            return
+        action = parts[0].lower()
+        if action == "open" and len(parts) >= 2:
+            item = self._resolve_favorite_item(parts[1])
+            webbrowser.open(item.url)
+            self.history_store.add_video(item)
+            print(f"已打开收藏: {item.url}")
+            return
+        if action == "remove" and len(parts) >= 2:
+            item = self._resolve_favorite_item(parts[1])
+            self.history_store.remove_favorite(item)
+            print(f"已移出收藏: {item.title}")
+            return
+        print("用法: favorites [open <序号|BV号|av号|URL> | remove <序号|BV号|av号|URL>]")
 
     def do_comments(self, arg: str) -> None:
         if not arg.strip():
@@ -811,6 +927,28 @@ class BilibiliCLI(cmd.Cmd):
             return item.bvid or str(item.aid)
         return target
 
+    def _resolve_item_for_favorite(self, target: str) -> VideoItem:
+        if target.isdigit() and self.last_items:
+            index = int(target) - 1
+            if index < 0 or index >= len(self.last_items):
+                raise ValueError(f"序号超出范围: {target}")
+            return self.last_items[index]
+        return self.client.video(self._resolve_target(target))
+
+    def _resolve_favorite_item(self, target: str) -> VideoItem:
+        favorites = self.history_store.get_favorite_videos()
+        if target.isdigit():
+            index = int(target) - 1
+            if index < 0 or index >= len(favorites):
+                raise ValueError(f"收藏夹序号超出范围: {target}")
+            return favorites[index]
+        ref_type, value = parse_video_ref(target)
+        target_key = video_key_from_ref(ref_type, value)
+        for item in favorites:
+            if video_key_from_item(item) == target_key:
+                return item
+        raise ValueError("收藏夹中不存在该视频")
+
     def onecmd(self, line: str) -> bool:
         try:
             return super().onecmd(line)
@@ -834,7 +972,7 @@ def print_video_list(items: list[VideoItem], title: str) -> None:
         print(f"{index:>2}. {shorten(item.title, 72)}")
         print(f"    {meta}")
         print(f"    {item.bvid or item.aid} | {item.url}")
-    print("\n提示: 可用 `video 1` 查看详情，或 `open 1` 在浏览器中打开。")
+    print("\n提示: 可用 `video 1` 查看详情，`favorite 1` 加入收藏，或 `open 1` 在浏览器中打开。")
 
 
 def print_video_detail(item: VideoItem) -> None:
@@ -874,6 +1012,19 @@ def print_history(history_store: HistoryStore) -> None:
         print(f"    {item.author} | {item.bvid or item.aid} | {item.url}")
 
 
+def print_favorites(history_store: HistoryStore) -> None:
+    print("\n收藏夹")
+    print("======")
+    favorites = history_store.get_favorite_videos()
+    if not favorites:
+        print("收藏夹为空。")
+        return
+    for index, item in enumerate(favorites, start=1):
+        print(f"{index:>2}. {shorten(item.title, 72)}")
+        print(f"    {item.author} | {item.bvid or item.aid} | {item.url}")
+    print("\n提示: 可用 `favorites open 1` 直接打开，或 `favorites remove 1` 从收藏夹移除。")
+
+
 def print_comments(item: VideoItem, comments: list[CommentItem]) -> None:
     title = f"热评预览: {shorten(item.title, 72)}"
     print(f"\n{title}")
@@ -892,18 +1043,18 @@ def build_detail_lines(item: VideoItem, width: int) -> list[str]:
     return [
         *title_lines,
         "",
-        f"UP主: {item.author}",
-        f"BV号: {item.bvid or '-'}",
-        f"AID: {item.aid or '-'}",
-        f"时长: {item.duration}",
-        f"发布时间: {format_timestamp(item.pubdate)}",
-        f"播放: {human_count(item.play)}",
-        f"弹幕: {human_count(item.danmaku)}",
-        f"点赞: {human_count(item.like)}",
-        f"收藏: {human_count(item.favorite)}",
-        f"链接: {item.url}",
+        f"👤 UP主: {item.author}",
+        f"🔗 BV号: {item.bvid or '-'}",
+        f"🔗 AID: {item.aid or '-'}",
+        f"🕒 时长: {item.duration}",
+        f"📅 发布时间: {format_timestamp(item.pubdate)}",
+        f"▶ 播放: {human_count(item.play)}",
+        f"≡ 弹幕: {human_count(item.danmaku)}",
+        f"👍 点赞: {human_count(item.like)}",
+        f"⭐ 收藏: {human_count(item.favorite)}",
+        f"🌐 链接: {item.url}",
         "",
-        "简介:",
+        "📝 简介:",
         *description_lines,
     ]
 
@@ -972,10 +1123,16 @@ class BilibiliTUI:
             return
         curses.start_color()
         curses.use_default_colors()
-        curses.init_pair(1, curses.COLOR_BLACK, curses.COLOR_CYAN)
-        curses.init_pair(2, curses.COLOR_CYAN, -1)
+        theme_color = 13 if getattr(curses, "COLORS", 0) >= 16 else curses.COLOR_MAGENTA
+        if curses.can_change_color() and theme_color < getattr(curses, "COLORS", 0):
+            try:
+                curses.init_color(theme_color, *BILIBILI_PINK_RGB)
+            except curses.error:
+                pass
+        curses.init_pair(1, curses.COLOR_WHITE, theme_color)
+        curses.init_pair(2, theme_color, -1)
         curses.init_pair(3, curses.COLOR_WHITE, -1)
-        curses.init_pair(4, curses.COLOR_BLACK, curses.COLOR_WHITE)
+        curses.init_pair(4, curses.COLOR_BLACK, theme_color)
         self.use_colors = True
 
     def attr_header(self) -> int:
@@ -1015,6 +1172,8 @@ class BilibiliTUI:
             return f"搜索: {self.keyword}  第 {self.page} 页"
         if self.mode == "history":
             return "最近浏览"
+        if self.mode == "favorites":
+            return "收藏夹"
         return f"{self.active_channel()['label']}  第 {self.page} 页"
 
     def active_channel(self) -> dict[str, Any]:
@@ -1101,9 +1260,9 @@ class BilibiliTUI:
         if comment_error and not comments:
             lines.extend(["", f"评论加载失败: {comment_error}", "提示: 按 o 在浏览器中查看完整评论"])
         if comments:
-            lines.extend(["", "热评:"])
+            lines.extend(["", "💬 热评:"])
             for index, comment in enumerate(comments, start=1):
-                header = f"{index}. {comment.author} · {human_count(comment.like)} 赞 · {format_timestamp(comment.ctime)}"
+                header = f"{index}. 👤 {comment.author} · 👍 {human_count(comment.like)} · 📅 {format_timestamp(comment.ctime)}"
                 lines.append(header)
                 lines.extend(wrap_display(comment.message or "暂无评论内容", width=max(20, width)))
                 lines.append("")
@@ -1163,6 +1322,8 @@ class BilibiliTUI:
             self.items = self.client.search(self.keyword, page=self.page, page_size=self.limit)
         elif self.mode == "history":
             self.items = self.history_store.get_recent_videos(self.limit)
+        elif self.mode == "favorites":
+            self.items = self.history_store.get_favorite_videos(self.limit)
         else:
             self.refresh_home_meta()
             channel = self.active_channel()
@@ -1223,6 +1384,17 @@ class BilibiliTUI:
             return
         comment_count = len(self.current_comments())
         self.status = f"已加载评论 {comment_count} 条"
+
+    def toggle_selected_favorite(self) -> None:
+        item = self.current_detail_item() if self.detail_mode else self.selected_item
+        if item is None:
+            self.status = "当前没有可收藏的视频"
+            return
+        is_added = self.history_store.toggle_favorite(item)
+        message = f"{'已收藏' if is_added else '已取消收藏'}: {truncate_display(item.title, 40)}"
+        if self.mode == "favorites":
+            self.load_items()
+        self.status = message
 
     def open_selected(self) -> None:
         item = self.selected_item
@@ -1295,6 +1467,8 @@ class BilibiliTUI:
             "l              重跑最近一次搜索",
             "h              切回热门",
             "v              查看历史",
+            "m              查看收藏夹",
+            "f              收藏 / 取消收藏当前视频",
             "n / p          下一页 / 上一页",
             "o              浏览器打开当前视频",
             "c              刷新评论预览",
@@ -1325,10 +1499,27 @@ class BilibiliTUI:
     def draw_box(self, stdscr: Any, y: int, x: int, height: int, width: int, label: str | None = None) -> None:
         import curses
 
-        win = stdscr.derwin(height, width, y, x)
-        win.box()
+        if height <= 1 or width <= 1:
+            return
+
+        top = "╭" + "─" * (width - 2) + "╮"
+        bottom = "╰" + "─" * (width - 2) + "╯"
+        
+        try:
+            stdscr.addnstr(y, x, top, width, self.attr_muted())
+            for i in range(1, height - 1):
+                stdscr.addnstr(y + i, x, "│", 1, self.attr_muted())
+                stdscr.addnstr(y + i, x + width - 1, "│", 1, self.attr_muted())
+            stdscr.addnstr(y + height - 1, x, bottom, width, self.attr_muted())
+        except curses.error:
+            pass
+
         if label:
-            win.addnstr(0, 2, f" {label} ", width - 4, self.attr_accent())
+            label_text = f" {label} "
+            try:
+                stdscr.addnstr(y, x + 2, label_text, width - 4, self.attr_accent())
+            except curses.error:
+                pass
 
     def draw_banner(self, stdscr: Any, y: int, width: int) -> int:
         banner_height = 6
@@ -1343,7 +1534,14 @@ class BilibiliTUI:
             search_text = f" 默认搜索：{truncate_display(default_word, max(12, width - 24))} "
         search_x = centered_x(width, search_text, 2)
         stdscr.addnstr(y + 2, search_x, search_text, max(1, width - search_x - 2), self.attr_selected())
-        channel_label = self.active_channel()["label"] if self.mode == "hot" else "搜索"
+        if self.mode == "hot":
+            channel_label = self.active_channel()["label"]
+        elif self.mode == "favorites":
+            channel_label = "收藏夹"
+        elif self.mode == "history":
+            channel_label = "最近浏览"
+        else:
+            channel_label = "搜索"
         section_line = f"当前分区 · {channel_label}"
         stdscr.addnstr(y + 3, centered_x(width, section_line, 2), section_line, width - 4, self.attr_muted())
         hot_words = " · ".join(self.trending_keywords_cache[:3]) if self.trending_keywords_cache else "热点内容 · 分区导航 · 精选视频"
@@ -1372,14 +1570,15 @@ class BilibiliTUI:
             stdscr.addnstr(y + 2, x + 2, "没有可展示的内容", width - 4, self.attr_muted())
             return
 
+        title_text = f"★ {item.title}" if self.history_store.is_favorite(item) else item.title
         if height < 9:
-            stdscr.addnstr(y + 1, x + 2, truncate_display(item.title, width - 4), width - 4, self.attr_title())
+            stdscr.addnstr(y + 1, x + 2, truncate_display(title_text, width - 4), width - 4, self.attr_title())
             stdscr.addnstr(y + 2, x + 2, truncate_display(item.author, width - 4), width - 4, self.attr_muted())
             stdscr.addnstr(y + height - 2, x + 2, "Enter 查看详情", width - 4, self.attr_muted())
             return
 
         title_attr = self.attr_selected() if selected else self.attr_title()
-        title_lines = wrap_display(item.title, max(12, width - 4))
+        title_lines = wrap_display(title_text, max(12, width - 4))
         content_y = y + 1
         max_title_lines = 2 if height < 16 else 3
         shown_title_lines = title_lines[:max_title_lines]
@@ -1417,7 +1616,7 @@ class BilibiliTUI:
         if recent_videos:
             sections.append(("最近浏览", recent_videos[:3]))
 
-        sections.append(("快捷操作", ["Enter 查看详情", "/ 直接搜索", "Tab 切分区"]))
+        sections.append(("快捷操作", ["Enter 查看详情", "f 收藏当前视频", "m 打开收藏夹"]))
 
         footer_y = y + height - 2
         available_body_lines = max(0, footer_y - content_y)
@@ -1442,16 +1641,18 @@ class BilibiliTUI:
         label = f"{index + 1:02d}"
         self.draw_box(stdscr, y, x, height, width, label)
         title_attr = self.attr_selected() if selected else self.attr_title()
-        stdscr.addnstr(y + 1, x + 2, truncate_display(item.title, width - 4), width - 4, title_attr)
+        title = f"★ {item.title}" if self.history_store.is_favorite(item) else item.title
+        stdscr.addnstr(y + 1, x + 2, truncate_display(title, width - 4), width - 4, title_attr)
         stdscr.addnstr(y + 2, x + 2, truncate_display(item.author, width - 4), width - 4, self.attr_muted())
         if height >= 5:
-            metrics = f"{human_count(item.play)} 播放  {item.duration}"
+            metrics = f"▶ {human_count(item.play)}  🕒 {item.duration}"
             stdscr.addnstr(y + 3, x + 2, truncate_display(metrics, width - 4), width - 4, self.attr_muted())
         if selected and height >= 5:
             stdscr.addnstr(y + height - 2, x + 2, "当前选中", width - 4, self.attr_accent())
 
     def draw_comments_panel(self, stdscr: Any, y: int, x: int, height: int, width: int) -> None:
-        self.draw_box(stdscr, y, x, height, width, "热评预览")
+        panel_label = "评论预览" if self.mode == "favorites" else "热评预览"
+        self.draw_box(stdscr, y, x, height, width, panel_label)
         if height < 4:
             return
         comments = self.current_comments()
@@ -1472,7 +1673,7 @@ class BilibiliTUI:
                 stdscr.addnstr(y + 2, x + 2, "按 r 刷新页面，按 o 浏览器查看", width - 4, self.attr_muted())
             else:
                 stdscr.addnstr(y + 1, x + 2, "按 c 加载当前视频评论", width - 4, self.attr_muted())
-                stdscr.addnstr(y + 2, x + 2, "r 刷新整个首页内容", width - 4, self.attr_muted())
+                stdscr.addnstr(y + 2, x + 2, "r 刷新当前视图", width - 4, self.attr_muted())
             return
 
         cursor = y + 1
@@ -1508,16 +1709,19 @@ class BilibiliTUI:
             return "搜索"
         if self.mode == "history":
             return "历史"
+        if self.mode == "favorites":
+            return "收藏夹"
         return self.active_channel()["label"]
 
     def draw_detail_summary(self, stdscr: Any, start_y: int, start_x: int, width: int, height: int) -> None:
         item = self.current_detail_item()
         if item is None:
-            stdscr.addnstr(start_y, start_x, "No item selected.", width, self.attr_muted())
+            stdscr.addnstr(start_y, start_x, "当前没有选中的视频", width, self.attr_muted())
             return
 
+        title = f"★ {item.title}" if self.history_store.is_favorite(item) else item.title
         summary_lines = [
-            item.title,
+            title,
             f"UP主 {item.author}",
             f"播放 {human_count(item.play)}   弹幕 {human_count(item.danmaku)}   时长 {item.duration}",
             f"发布时间 {format_timestamp(item.pubdate)}",
@@ -1541,6 +1745,84 @@ class BilibiliTUI:
                 attr = 0
             stdscr.addnstr(start_y + offset, start_x, line, width, attr)
 
+    def draw_favorites_list(self, stdscr: Any, y: int, x: int, height: int, width: int) -> None:
+        label = f"收藏列表 · {len(self.items)} 条"
+        self.draw_box(stdscr, y, x, height, width, label)
+        if height < 4:
+            return
+        if not self.items:
+            stdscr.addnstr(y + 2, x + 2, "收藏夹还是空的", width - 4, self.attr_muted())
+            if height >= 6:
+                stdscr.addnstr(y + 3, x + 2, "看到喜欢的视频时按 f 就能加入收藏。", width - 4, self.attr_muted())
+            return
+
+        cursor = y + 1
+        for index, item in enumerate(self.items):
+            remaining = y + height - cursor - 1
+            if remaining < 2:
+                break
+            selected = index == self.selected_index
+            prefix = "›" if selected else " "
+            title = f"{prefix} {index + 1}. "
+            title += f"★ {item.title}" if self.history_store.is_favorite(item) else item.title
+            title_attr = self.attr_selected() if selected else self.attr_title()
+            stdscr.addnstr(cursor, x + 2, truncate_display(title, width - 4), width - 4, title_attr)
+            cursor += 1
+
+            meta = f"{item.author} · {human_count(item.play)} 播放 · {item.duration}"
+            stdscr.addnstr(cursor, x + 2, truncate_display(meta, width - 4), width - 4, self.attr_muted())
+            cursor += 1
+
+            if remaining >= 4:
+                ref_line = f"{item.bvid or item.aid} · {format_timestamp(item.pubdate)}"
+                stdscr.addnstr(cursor, x + 2, truncate_display(ref_line, width - 4), width - 4, self.attr_muted())
+                cursor += 1
+
+            if cursor < y + height - 1:
+                stdscr.addnstr(cursor, x + 2, "·" * max(1, min(width - 4, 12)), width - 4, self.attr_muted())
+                cursor += 1
+
+    def draw_favorites_view(self, stdscr: Any, height: int, width: int) -> None:
+        header = " 我的收藏 "
+        header_right = f"共 {len(self.items)} 条"
+        stdscr.addnstr(0, 0, header, width - 1, self.attr_header())
+        right_x = max(0, width - display_width(header_right) - 1)
+        stdscr.addnstr(0, right_x, header_right, width - right_x - 1, self.attr_header())
+
+        selected = self.selected_item
+        if selected is None:
+            subtitle = "本地收藏，稍后可用 o 在浏览器继续看"
+        else:
+            subtitle = truncate_display(
+                f"当前选中 · {selected.author} · {human_count(selected.play)} 播放 · Enter 查看详情 · f 取消收藏 · o 浏览器打开",
+                max(20, width - 2),
+            )
+        stdscr.addnstr(1, 0, subtitle, width - 1, self.attr_muted())
+
+        content_top = 3
+        content_height = height - content_top - 3
+        left_width = max(34, width * 36 // 100)
+        left_width = min(left_width, width - 40)
+        right_x = left_width + 1
+        right_width = width - right_x
+
+        self.draw_favorites_list(stdscr, content_top, 0, content_height, left_width)
+
+        preview_height = content_height
+        comments_height = 0
+        if content_height >= 16:
+            preview_height = max(9, content_height * 55 // 100)
+            comments_height = content_height - preview_height
+            if comments_height < 5:
+                preview_height = content_height
+                comments_height = 0
+
+        self.draw_box(stdscr, content_top, right_x, preview_height, right_width, "视频预览")
+        self.draw_detail_summary(stdscr, content_top + 1, right_x + 2, max(12, right_width - 4), max(1, preview_height - 2))
+
+        if comments_height >= 5:
+            self.draw_comments_panel(stdscr, content_top + preview_height, right_x, comments_height, right_width)
+
     def draw_split_view(self, stdscr: Any, height: int, width: int) -> None:
         import curses
 
@@ -1549,12 +1831,13 @@ class BilibiliTUI:
         stdscr.addnstr(0, 0, header, width - 1, self.attr_header())
         right_x = max(0, width - display_width(header_right) - 1)
         stdscr.addnstr(0, right_x, header_right, width - right_x - 1, self.attr_header())
-        mode_line = "[首页流]  [搜索]  [历史记录]"
+        mode_line = "[首页流]  [搜索]  [历史记录]  [收藏夹]"
         stdscr.addnstr(1, 0, mode_line, width - 1, self.attr_muted())
         active_marker_map = {
             "hot": "[首页流]",
             "search": "[搜索]",
             "history": "[历史记录]",
+            "favorites": "[收藏夹]",
         }
         active_marker = active_marker_map.get(self.mode, "[首页流]")
         marker_x = mode_line.find(active_marker)
@@ -1564,6 +1847,8 @@ class BilibiliTUI:
             search_hint = f"当前搜索：{truncate_display(self.keyword, max(10, width // 4))}"
         elif self.mode == "history":
             search_hint = "按 v 查看最近浏览"
+        elif self.mode == "favorites":
+            search_hint = "按 f 取消收藏，o 打开，Enter 看详情"
         else:
             search_hint = "Tab 切换分区，1-9 直选，/ 搜索"
         hint_x = max(0, width - display_width(search_hint) - 1)
@@ -1621,13 +1906,15 @@ class BilibiliTUI:
         import curses
 
         header = " 详情页 "
-        header_right = "j/k 滚动  o 浏览器打开  c 刷新评论  Esc 返回  ? 帮助"
+        header_right = "j/k 滚动  f 收藏  o 浏览器打开  c 刷新评论  Esc 返回  ? 帮助"
         stdscr.addnstr(0, 0, header, width - 1, self.attr_header())
         right_x = max(0, width - display_width(header_right) - 1)
         stdscr.addnstr(0, right_x, header_right, width - right_x - 1, self.attr_header())
         stdscr.hline(1, 0, curses.ACS_HLINE, width)
         item = self.current_detail_item()
         title = item.title if item else "没有结果"
+        if item and self.history_store.is_favorite(item):
+            title = f"★ {title}"
         content_top = 2
         content_height = height - 5
         self.draw_box(stdscr, content_top, 0, content_height, width, "视频详情")
@@ -1653,11 +1940,16 @@ class BilibiliTUI:
 
         if self.detail_mode:
             self.draw_detail_view(stdscr, height, width)
+        elif self.mode == "favorites":
+            self.draw_favorites_view(stdscr, height, width)
         else:
             self.draw_split_view(stdscr, height, width)
 
         stdscr.hline(height - 2, 0, curses.ACS_HLINE, width)
-        shortcuts = "Tab 分区  1-9 直选  / 搜索  c 评论  r 刷新  Enter 详情  q 退出"
+        if self.mode == "favorites":
+            shortcuts = "j/k 移动  Enter 详情  f 取消收藏  o 浏览器打开  c 评论  b 返回  q 退出"
+        else:
+            shortcuts = "Tab 分区  1-9 直选  / 搜索  f 收藏  m 收藏夹  c 评论  Enter 详情  q 退出"
         stdscr.addnstr(height - 2, 2, shortcuts, width - 4, self.attr_muted())
         stdscr.addnstr(height - 1, 0, f"状态: {self.status}", width - 1, self.attr_accent())
         if self.show_help:
@@ -1697,6 +1989,8 @@ class BilibiliTUI:
                         self.detail_scroll += 10
                     elif key == ord("o"):
                         self.open_selected()
+                    elif key == ord("f"):
+                        self.toggle_selected_favorite()
                     elif key == ord("c"):
                         self.refresh_comments()
                     elif key == ord("r"):
@@ -1739,6 +2033,10 @@ class BilibiliTUI:
                     self.switch_mode("hot")
                 elif key == ord("v"):
                     self.switch_mode("history")
+                elif key == ord("m"):
+                    self.switch_mode("favorites")
+                elif key == ord("f"):
+                    self.toggle_selected_favorite()
                 elif key == ord("l"):
                     self.rerun_last_search()
                 elif key == ord("d"):
@@ -1756,16 +2054,16 @@ class BilibiliTUI:
                     else:
                         self.status = "已取消搜索"
                 elif key in (ord("n"), curses.KEY_NPAGE):
-                    if self.mode == "history":
-                        self.status = "历史页没有分页"
+                    if self.mode in {"history", "favorites"}:
+                        self.status = "当前列表没有分页"
                     else:
                         self.push_list_state()
                         self.page += 1
                         self.selected_index = 0
                         self.load_items()
                 elif key in (ord("p"), curses.KEY_PPAGE):
-                    if self.mode == "history":
-                        self.status = "历史页没有分页"
+                    if self.mode in {"history", "favorites"}:
+                        self.status = "当前列表没有分页"
                     elif self.page > 1:
                         self.push_list_state()
                         self.page -= 1
@@ -1821,6 +2119,16 @@ def build_parser() -> argparse.ArgumentParser:
     open_parser = subparsers.add_parser("open", help="浏览器打开视频")
     open_parser.add_argument("ref", help="BV号 / av号 / URL")
 
+    favorite_parser = subparsers.add_parser("favorite", help="将视频加入收藏夹")
+    favorite_parser.add_argument("ref", help="BV号 / av号 / URL")
+
+    favorites_parser = subparsers.add_parser("favorites", help="查看或操作收藏夹")
+    favorites_subparsers = favorites_parser.add_subparsers(dest="favorites_action")
+    favorites_open_parser = favorites_subparsers.add_parser("open", help="浏览器打开收藏夹中的视频")
+    favorites_open_parser.add_argument("ref", help="收藏夹序号 / BV号 / av号 / URL")
+    favorites_remove_parser = favorites_subparsers.add_parser("remove", help="从收藏夹移除视频")
+    favorites_remove_parser.add_argument("ref", help="收藏夹序号 / BV号 / av号 / URL")
+
     subparsers.add_parser("history", help="查看最近搜索和最近浏览")
     subparsers.add_parser("repl", help="进入交互模式")
     subparsers.add_parser("tui", help="进入全屏终端界面")
@@ -1863,6 +2171,28 @@ def run_once(args: argparse.Namespace, client: BilibiliClient, history_store: Hi
         url = open_video_target(args.ref)
         print(f"已打开: {url}")
         return 0
+    if args.command == "favorite":
+        item = client.video(args.ref)
+        added = history_store.add_favorite(item)
+        print(f"{'已收藏' if added else '收藏夹已更新'}: {item.title}")
+        return 0
+    if args.command == "favorites":
+        action = getattr(args, "favorites_action", None)
+        if action is None:
+            print_favorites(history_store)
+            return 0
+        shell = BilibiliCLI(client, history_store)
+        if action == "open":
+            item = shell._resolve_favorite_item(args.ref)
+            webbrowser.open(item.url)
+            history_store.add_video(item)
+            print(f"已打开收藏: {item.url}")
+            return 0
+        if action == "remove":
+            item = shell._resolve_favorite_item(args.ref)
+            history_store.remove_favorite(item)
+            print(f"已移出收藏: {item.title}")
+            return 0
     if args.command == "history":
         print_history(history_store)
         return 0

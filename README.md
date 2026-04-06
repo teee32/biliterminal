@@ -26,6 +26,9 @@ git clone https://github.com/teee32/biliterminal.git && cd biliterminal && ./bil
 ```bash
 ./biliterminal recommend -n 5
 ./biliterminal search 中文 -n 5
+./biliterminal favorite BV19K9uBmEdx
+./biliterminal favorites
+./biliterminal favorites open 1
 ./biliterminal comments BV19K9uBmEdx -n 3
 ```
 
@@ -69,6 +72,7 @@ open dist/BiliTerminal.app
 - 视频详情查看
 - 视频评论预览
 - 从终端直接打开浏览器页面
+- 本地收藏夹，支持稍后从浏览器继续看
 - 最近搜索与最近浏览历史
 - 交互式 REPL，支持基于上一次列表结果按序号继续操作
 - 全屏 TUI，支持首页推荐流、分区切换、方向键浏览、回车进入详情页、历史视图、返回栈和帮助浮层
@@ -85,6 +89,10 @@ python3 bili_terminal/bilibili_cli.py precious -n 5
 python3 bili_terminal/bilibili_cli.py trending -n 10
 python3 bili_terminal/bilibili_cli.py search 原神 -n 5
 python3 bili_terminal/bilibili_cli.py video BV1xx411c7mu
+python3 bili_terminal/bilibili_cli.py favorite BV19K9uBmEdx
+python3 bili_terminal/bilibili_cli.py favorites
+python3 bili_terminal/bilibili_cli.py favorites open 1
+python3 bili_terminal/bilibili_cli.py favorites remove 1
 python3 bili_terminal/bilibili_cli.py history
 python3 bili_terminal/bilibili_cli.py repl
 python3 bili_terminal/bilibili_cli.py tui
@@ -125,6 +133,9 @@ open dist/BiliTerminal.app
 ```text
 $ python3 bili_terminal/bilibili_cli.py repl
 bili> hot 1 5
+bili> favorite 1
+bili> favorites
+bili> favorites open 1
 bili> video 1
 bili> open 1
 bili> search 原神 1 5
@@ -143,6 +154,8 @@ bili> search 原神 1 5
 - `d`：使用首页默认搜索词直接搜索
 - `h`：切回首页内容流
 - `v`：切到最近浏览
+- `m`：切到收藏夹
+- `f`：收藏 / 取消收藏当前视频
 - `n/p`：翻页
 - `PgUp/PgDn`：在详情页滚动
 - `o`：浏览器打开当前视频
