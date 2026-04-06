@@ -1,0 +1,1 @@
+"""Bilibili terminal client package."""
