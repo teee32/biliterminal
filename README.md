@@ -43,6 +43,22 @@ python3 -m bili_terminal tui
 open dist/BiliTerminal.app
 ```
 
+## 界面预览
+
+下面这几张都是当前版本的真实运行截图。
+
+### 首页流
+
+![BiliTerminal 首页流](assets/readme/tui-home.png)
+
+### 搜索与评论
+
+![BiliTerminal 搜索与评论](assets/readme/tui-search.png)
+
+### 详情页
+
+![BiliTerminal 详情页](assets/readme/tui-detail.png)
+
 这个实现基于对 Bilibili 网页公开接口的逆向观察，当前覆盖 3 个核心能力：
 
 - 首页推荐流
