@@ -28,6 +28,10 @@ git clone https://github.com/teee32/biliterminal.git && cd biliterminal && ./bil
 ```bash
 ./biliterminal recommend -n 5
 ./biliterminal search 中文 -n 5
+./biliterminal audio BV19K9uBmEdx
+./biliterminal audio pause
+./biliterminal audio resume
+./biliterminal audio stop
 ./biliterminal favorite BV19K9uBmEdx
 ./biliterminal favorites
 ./biliterminal favorites open 1
@@ -90,6 +94,10 @@ python3 bili_terminal/bilibili_cli.py recommend -n 5
 python3 bili_terminal/bilibili_cli.py precious -n 5
 python3 bili_terminal/bilibili_cli.py trending -n 10
 python3 bili_terminal/bilibili_cli.py search 原神 -n 5
+python3 bili_terminal/bilibili_cli.py audio BV19K9uBmEdx
+python3 bili_terminal/bilibili_cli.py audio pause
+python3 bili_terminal/bilibili_cli.py audio resume
+python3 bili_terminal/bilibili_cli.py audio stop
 python3 bili_terminal/bilibili_cli.py video BV1xx411c7mu
 python3 bili_terminal/bilibili_cli.py favorite BV19K9uBmEdx
 python3 bili_terminal/bilibili_cli.py favorites
@@ -135,6 +143,9 @@ open dist/BiliTerminal.app
 ```text
 $ python3 bili_terminal/bilibili_cli.py repl
 bili> hot 1 5
+bili> audio 1
+bili> audio pause
+bili> audio stop
 bili> favorite 1
 bili> favorites
 bili> favorites open 1
@@ -158,6 +169,8 @@ bili> search 原神 1 5
 - `v`：切到最近浏览
 - `m`：切到收藏夹
 - `f`：收藏 / 取消收藏当前视频
+- `a`：播放 / 暂停当前视频音频
+- `x`：停止当前音频
 - `n/p`：翻页
 - `PgUp/PgDn`：在详情页滚动
 - `o`：浏览器打开当前视频
@@ -177,6 +190,8 @@ python3 -m unittest discover -s bili_terminal/tests -v
 - CLI 会为接口补齐浏览器请求头，降低被风控 412 的概率。
 - 仓库内直接运行时，搜索词和最近浏览视频会落到 `.omx/state/bilibili-cli-history.json`。
 - 双击版会把历史写到 `~/.biliterminal/state/bilibili-cli-history.json`，并把启动日志写到 `~/.biliterminal/launcher.log`。
+- 音频播放优先使用 `mpv` 或 `ffplay` 直连；macOS 上如果都没装，会自动走后台下载后用原生无窗体 audio helper 播放，只有 helper 不可用时才回退到 `afplay`。
+- TUI 里 `a` 是当前视频的播放 / 暂停切换，`x` 会直接停止当前音频；CLI / REPL 里也支持 `audio pause`、`audio resume`、`audio stop`。
 - 这是一个偏“轻量摸鱼”场景的终端浏览器，不是下载器，也没有实现登录态、投稿、评论发送、弹幕发送等需要更高权限的功能。
 - 目前默认聚焦视频内容，不处理直播、课程、专栏、动态等其他内容类型。
 - 终端版已经接入首页推荐、热搜、默认搜索词、入站必刷与分区榜单，但因为 curses 终端没有图片、瀑布流和登录态组件，所以还不是官网像素级复刻。

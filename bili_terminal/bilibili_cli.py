@@ -11,7 +11,11 @@ import json
 import os
 import re
 import shlex
+import shutil
+import signal
+import subprocess
 import sys
+import tempfile
 import time
 import textwrap
 import unicodedata
@@ -29,6 +33,7 @@ DEFAULT_STATE_DIR = ".omx/state"
 DEFAULT_HISTORY_FILENAME = "bilibili-cli-history.json"
 MAX_HISTORY_ITEMS = 40
 MAX_FAVORITE_ITEMS = 200
+MACOS_AUDIO_HELPER_NAME = "biliterminal-audio-helper"
 BILIBILI_PINK_RGB = (984, 447, 600)
 DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -55,6 +60,7 @@ COMMON_MOJIBAKE_CHARS = set("ÃÂÐÑãäåæçèéêëìíîïðñòóôõöù�
 INITIAL_STATE_PATTERN = re.compile(r"window\.__INITIAL_STATE__=(\{.*?\});\(function", re.S)
 INITIAL_STATE_FALLBACK_PATTERN = re.compile(r"window\.__INITIAL_STATE__=(\{.*?\})\s*var\s+isBilibili", re.S)
 COMMENT_WBI_KEYS_PATTERN = re.compile(r'encWbiKeys:\{wbiImgKey:"([^"]+)",wbiSubKey:"([^"]+)"\}')
+PLAYINFO_PATTERN = re.compile(r"window\.__playinfo__=(\{.*?\})</script>", re.S)
 WBI_KEY_SANITIZE_PATTERN = re.compile(r"[!'()*]")
 COMMENT_WEB_LOCATION = 1315875
 COMMENT_WBI_MIXIN_TABLE = [
@@ -101,6 +107,26 @@ class CommentItem:
     message: str
     like: int
     ctime: int | None
+
+
+@dataclass(slots=True)
+class AudioStream:
+    title: str
+    url: str
+    referer: str
+    user_agent: str
+    source_kind: str
+
+
+@dataclass(slots=True)
+class AudioPlaybackState:
+    pid: int | None
+    title: str
+    video_key: str | None
+    backend: str = "process"
+    paused: bool = False
+    control_pid: int | None = None
+    media_path: str | None = None
 
 
 def strip_html(value: str) -> str:
@@ -345,6 +371,550 @@ def open_video_target(target: str) -> str:
     url = build_watch_url(ref_type, value)
     webbrowser.open(url)
     return url
+
+
+def extract_audio_stream(
+    playinfo: dict[str, Any],
+    *,
+    referer: str,
+    user_agent: str,
+    title: str,
+) -> AudioStream:
+    data = playinfo.get("data") or {}
+    dash = data.get("dash") or {}
+    audio_candidates: list[dict[str, Any]] = []
+    for entry in dash.get("audio") or []:
+        if isinstance(entry, dict):
+            audio_candidates.append(entry)
+    flac_audio = (dash.get("flac") or {}).get("audio")
+    if isinstance(flac_audio, dict):
+        audio_candidates.append(flac_audio)
+    for entry in (dash.get("dolby") or {}).get("audio") or []:
+        if isinstance(entry, dict):
+            audio_candidates.append(entry)
+
+    if audio_candidates:
+        selected = max(audio_candidates, key=lambda entry: int(entry.get("bandwidth") or entry.get("id") or 0))
+        stream_url = selected.get("baseUrl") or selected.get("base_url")
+        if stream_url:
+            return AudioStream(
+                title=title,
+                url=str(stream_url),
+                referer=referer,
+                user_agent=user_agent,
+                source_kind="dash-audio",
+            )
+
+    for entry in data.get("durl") or []:
+        if not isinstance(entry, dict):
+            continue
+        stream_url = entry.get("url")
+        if stream_url:
+            return AudioStream(
+                title=title,
+                url=str(stream_url),
+                referer=referer,
+                user_agent=user_agent,
+                source_kind="media",
+            )
+
+    raise BilibiliAPIError("当前视频没有可用音频流")
+
+
+def build_audio_player_command(stream: AudioStream) -> list[str] | None:
+    if shutil.which("mpv"):
+        return [
+            "mpv",
+            "--no-video",
+            "--force-window=no",
+            f"--title={stream.title}",
+            f"--referrer={stream.referer}",
+            f"--user-agent={stream.user_agent}",
+            stream.url,
+        ]
+    if shutil.which("ffplay"):
+        return [
+            "ffplay",
+            "-nodisp",
+            "-autoexit",
+            "-loglevel",
+            "warning",
+            "-headers",
+            f"Referer: {stream.referer}\r\nUser-Agent: {stream.user_agent}\r\n",
+            stream.url,
+        ]
+    return None
+
+
+def audio_worker_log_path() -> str:
+    return os.path.join(default_state_dir(), "audio-playback.log")
+
+
+def audio_playback_state_path() -> str:
+    return os.path.join(default_state_dir(), "audio-playback.json")
+
+
+def macos_audio_helper_source_path() -> str:
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "macos", "biliterminal_audio_helper.m")
+
+
+def macos_audio_helper_binary_path() -> str:
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), MACOS_AUDIO_HELPER_NAME)
+
+
+def macos_cached_audio_helper_path() -> str:
+    return os.path.join(default_state_dir(), "bin", MACOS_AUDIO_HELPER_NAME)
+
+
+def executable_file_exists(path: str) -> bool:
+    return os.path.isfile(path) and os.access(path, os.X_OK)
+
+
+def compile_macos_audio_helper(source_path: str, output_path: str) -> None:
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    command = [
+        "clang",
+        "-fobjc-arc",
+        "-framework",
+        "Foundation",
+        "-framework",
+        "AVFoundation",
+        source_path,
+        "-o",
+        output_path,
+    ]
+    try:
+        subprocess.run(
+            command,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        raise BilibiliAPIError(exc.stderr.strip() or "macOS 音频 helper 编译失败") from exc
+    os.chmod(output_path, 0o755)
+
+
+def macos_audio_helper_path() -> str | None:
+    if sys.platform != "darwin":
+        return None
+
+    configured_path = os.environ.get("BILITERMINAL_AUDIO_HELPER", "").strip()
+    if configured_path:
+        expanded = os.path.expanduser(configured_path)
+        if executable_file_exists(expanded):
+            return expanded
+
+    bundled_path = macos_audio_helper_binary_path()
+    if executable_file_exists(bundled_path):
+        return bundled_path
+
+    source_path = macos_audio_helper_source_path()
+    cached_path = macos_cached_audio_helper_path()
+    if not os.path.isfile(source_path) or shutil.which("clang") is None:
+        return None
+
+    needs_rebuild = not executable_file_exists(cached_path)
+    if not needs_rebuild:
+        try:
+            needs_rebuild = os.path.getmtime(source_path) > os.path.getmtime(cached_path)
+        except OSError:
+            needs_rebuild = True
+    if needs_rebuild:
+        try:
+            compile_macos_audio_helper(source_path, cached_path)
+        except BilibiliAPIError:
+            if not executable_file_exists(cached_path):
+                return None
+    return cached_path if executable_file_exists(cached_path) else None
+
+
+def pid_exists(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def save_audio_playback_state(state: AudioPlaybackState) -> None:
+    path = audio_playback_state_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(
+            {
+                "pid": state.pid,
+                "title": state.title,
+                "video_key": state.video_key,
+                "backend": state.backend,
+                "paused": state.paused,
+                "control_pid": state.control_pid,
+                "media_path": state.media_path,
+            },
+            handle,
+            ensure_ascii=False,
+            indent=2,
+        )
+
+
+def clear_audio_playback_state() -> None:
+    try:
+        os.unlink(audio_playback_state_path())
+    except FileNotFoundError:
+        return
+
+
+def cleanup_audio_media_path(media_path: str | None) -> None:
+    if not media_path:
+        return
+    try:
+        os.unlink(media_path)
+    except FileNotFoundError:
+        return
+    except OSError:
+        return
+
+
+def load_audio_playback_state() -> AudioPlaybackState | None:
+    path = audio_playback_state_path()
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None
+
+    if not isinstance(payload, dict):
+        clear_audio_playback_state()
+        return None
+
+    try:
+        pid_value = payload.get("pid")
+        state = AudioPlaybackState(
+            pid=int(pid_value) if pid_value not in (None, "") else None,
+            title=str(payload.get("title") or "当前音频"),
+            video_key=payload.get("video_key"),
+            backend=str(payload.get("backend") or "process"),
+            paused=bool(payload.get("paused")),
+            control_pid=int(payload["control_pid"]) if payload.get("control_pid") not in (None, "") else None,
+            media_path=str(payload["media_path"]) if payload.get("media_path") else None,
+        )
+    except (KeyError, TypeError, ValueError):
+        cleanup_audio_media_path(payload.get("media_path"))
+        clear_audio_playback_state()
+        return None
+
+    if state.pid is None or not pid_exists(state.pid):
+        cleanup_audio_media_path(state.media_path)
+        clear_audio_playback_state()
+        return None
+    return state
+
+
+def send_audio_signal(pid: int, sig: int) -> None:
+    os.kill(pid, sig)
+
+
+def wait_for_audio_exit(pid: int, timeout: float = 1.5) -> None:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not pid_exists(pid):
+            return
+        time.sleep(0.05)
+
+
+def pause_signal_for_state(state: AudioPlaybackState) -> int:
+    return signal.SIGUSR1 if state.backend == "macos-native" else signal.SIGSTOP
+
+
+def resume_signal_for_state(state: AudioPlaybackState) -> int:
+    return signal.SIGUSR2 if state.backend == "macos-native" else signal.SIGCONT
+
+
+def audio_control_target(state: AudioPlaybackState) -> int | None:
+    return state.control_pid or state.pid
+
+
+def stop_audio_playback(*, silent: bool = False) -> str:
+    state = load_audio_playback_state()
+    if state is None:
+        if silent:
+            return ""
+        raise BilibiliAPIError("当前没有音频在播放")
+    try:
+        if state.control_pid and pid_exists(state.control_pid):
+            try:
+                send_audio_signal(state.control_pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            wait_for_audio_exit(state.control_pid, timeout=0.6)
+        if state.pid is not None and pid_exists(state.pid):
+            try:
+                send_audio_signal(state.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            wait_for_audio_exit(state.pid)
+            if pid_exists(state.pid):
+                try:
+                    send_audio_signal(state.pid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    pass
+    except PermissionError:
+        pass
+    finally:
+        cleanup_audio_media_path(state.media_path)
+        clear_audio_playback_state()
+    return f"已停止音频: {truncate_display(state.title, 40)}"
+
+
+def pause_audio_playback() -> str:
+    if os.name == "nt":
+        raise BilibiliAPIError("当前平台不支持暂停音频，请直接停止后重播")
+    state = load_audio_playback_state()
+    if state is None:
+        raise BilibiliAPIError("当前没有音频在播放")
+    if state.paused:
+        return f"音频已暂停: {truncate_display(state.title, 40)}"
+    try:
+        target_pid = audio_control_target(state)
+        if target_pid is None:
+            raise ProcessLookupError
+        send_audio_signal(target_pid, pause_signal_for_state(state))
+    except ProcessLookupError as exc:
+        cleanup_audio_media_path(state.media_path)
+        clear_audio_playback_state()
+        raise BilibiliAPIError("当前没有音频在播放") from exc
+    state.paused = True
+    save_audio_playback_state(state)
+    return f"已暂停音频: {truncate_display(state.title, 40)}"
+
+
+def resume_audio_playback() -> str:
+    if os.name == "nt":
+        raise BilibiliAPIError("当前平台不支持继续音频，请直接重播")
+    state = load_audio_playback_state()
+    if state is None:
+        raise BilibiliAPIError("当前没有音频在播放")
+    if not state.paused:
+        return f"音频播放中: {truncate_display(state.title, 40)}"
+    try:
+        target_pid = audio_control_target(state)
+        if target_pid is None:
+            raise ProcessLookupError
+        send_audio_signal(target_pid, resume_signal_for_state(state))
+    except ProcessLookupError as exc:
+        cleanup_audio_media_path(state.media_path)
+        clear_audio_playback_state()
+        raise BilibiliAPIError("当前没有音频在播放") from exc
+    state.paused = False
+    save_audio_playback_state(state)
+    return f"已继续播放音频: {truncate_display(state.title, 40)}"
+
+
+def toggle_audio_playback() -> str:
+    state = load_audio_playback_state()
+    if state is None:
+        raise BilibiliAPIError("当前没有音频在播放")
+    if state.paused:
+        return resume_audio_playback()
+    return pause_audio_playback()
+
+
+def spawn_audio_worker(stream: AudioStream) -> int:
+    log_path = audio_worker_log_path()
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    log_handle = open(log_path, "ab")
+    command = [
+        sys.executable,
+        os.path.abspath(__file__),
+        "audio-worker",
+        "--url",
+        stream.url,
+        "--referer",
+        stream.referer,
+        "--user-agent",
+        stream.user_agent,
+        "--title",
+        stream.title,
+    ]
+    try:
+        process = subprocess.Popen(
+            command,
+            stdout=log_handle,
+            stderr=log_handle,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        return process.pid
+    finally:
+        log_handle.close()
+
+
+def play_audio_stream(stream: AudioStream, *, video_key: str | None = None) -> str:
+    command = build_audio_player_command(stream)
+    if command is None and macos_audio_helper_path() is None and not (sys.platform == "darwin" and shutil.which("afplay")):
+        raise BilibiliAPIError("未找到可用播放器，请安装 mpv 或 ffplay")
+
+    stop_audio_playback(silent=True)
+    pid = spawn_audio_worker(stream)
+    save_audio_playback_state(
+        AudioPlaybackState(
+            pid=pid,
+            title=stream.title,
+            video_key=video_key,
+            paused=False,
+            control_pid=None,
+        )
+    )
+    if command:
+        return f"已开始播放音频: {truncate_display(stream.title, 40)}"
+    return f"正在准备音频播放: {truncate_display(stream.title, 40)}"
+
+
+def prepare_audio_temp_path(url: str) -> str:
+    suffix = os.path.splitext(urllib.parse.urlparse(url).path)[1] or ".m4a"
+    temp_file = tempfile.NamedTemporaryFile(prefix="biliterminal-audio-", suffix=suffix, delete=False)
+    temp_path = temp_file.name
+    temp_file.close()
+    return temp_path
+
+
+def download_audio_to_path(url: str, referer: str, user_agent: str, temp_path: str) -> None:
+    try:
+        request = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": user_agent,
+                "Accept": "*/*",
+                "Referer": referer,
+            },
+        )
+        with urllib.request.urlopen(request, timeout=60) as response, open(temp_path, "wb") as handle:
+            while True:
+                chunk = response.read(256 * 1024)
+                if not chunk:
+                    break
+                handle.write(chunk)
+    except urllib.error.HTTPError as exc:
+        cleanup_audio_media_path(temp_path)
+        raise BilibiliAPIError(f"音频下载失败 HTTP {exc.code}: {exc.reason}") from exc
+    except urllib.error.URLError as exc:
+        cleanup_audio_media_path(temp_path)
+        raise BilibiliAPIError(f"音频下载失败: {exc.reason}") from exc
+
+
+def play_audio_for_item(client: "BilibiliClient", item: VideoItem) -> str:
+    stream = client.audio_stream_for_item(item)
+    return play_audio_stream(stream, video_key=video_key_from_item(item))
+
+
+def audio_action_for_item(client: "BilibiliClient", item: VideoItem) -> str:
+    state = load_audio_playback_state()
+    item_key = video_key_from_item(item)
+    if state and state.video_key and item_key == state.video_key:
+        return toggle_audio_playback()
+    return play_audio_for_item(client, item)
+
+
+def run_audio_worker(url: str, referer: str, user_agent: str, title: str) -> int:
+    stream = AudioStream(title=title or "当前音频", url=url, referer=referer, user_agent=user_agent, source_kind="worker")
+    command = build_audio_player_command(stream)
+    if command:
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+        )
+        existing_state = load_audio_playback_state()
+        save_audio_playback_state(
+            AudioPlaybackState(
+                pid=os.getpid(),
+                title=stream.title,
+                video_key=existing_state.video_key if existing_state else None,
+                backend="process",
+                paused=False,
+                control_pid=process.pid,
+            )
+        )
+        return process.wait()
+
+    helper_path = macos_audio_helper_path()
+    if helper_path:
+        temp_path = prepare_audio_temp_path(url)
+        try:
+            existing_state = load_audio_playback_state()
+            save_audio_playback_state(
+                AudioPlaybackState(
+                    pid=os.getpid(),
+                    title=stream.title,
+                    video_key=existing_state.video_key if existing_state else None,
+                    backend="macos-native",
+                    paused=False,
+                    control_pid=None,
+                    media_path=temp_path,
+                )
+            )
+            download_audio_to_path(url, referer, user_agent, temp_path)
+            process = subprocess.Popen(
+                [helper_path, temp_path],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+            )
+            save_audio_playback_state(
+                AudioPlaybackState(
+                    pid=os.getpid(),
+                    title=stream.title,
+                    video_key=existing_state.video_key if existing_state else None,
+                    backend="macos-native",
+                    paused=False,
+                    control_pid=process.pid,
+                    media_path=temp_path,
+                )
+            )
+            return process.wait()
+        finally:
+            cleanup_audio_media_path(temp_path)
+
+    if shutil.which("afplay") is None:
+        raise BilibiliAPIError("当前系统没有 afplay，无法执行音频下载兜底播放")
+
+    temp_path = prepare_audio_temp_path(url)
+    try:
+        existing_state = load_audio_playback_state()
+        save_audio_playback_state(
+            AudioPlaybackState(
+                pid=os.getpid(),
+                title=stream.title,
+                video_key=existing_state.video_key if existing_state else None,
+                backend="afplay",
+                paused=False,
+                media_path=temp_path,
+            )
+        )
+        download_audio_to_path(url, referer, user_agent, temp_path)
+        process = subprocess.Popen(
+            ["afplay", temp_path],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+        )
+        save_audio_playback_state(
+            AudioPlaybackState(
+                pid=os.getpid(),
+                title=stream.title,
+                video_key=existing_state.video_key if existing_state else None,
+                backend="afplay",
+                paused=False,
+                control_pid=process.pid,
+                media_path=temp_path,
+            )
+        )
+        return process.wait()
+    finally:
+        cleanup_audio_media_path(temp_path)
 
 
 def item_from_payload(payload: dict[str, Any]) -> VideoItem:
@@ -629,6 +1199,16 @@ class BilibiliClient:
         except json.JSONDecodeError as exc:
             raise BilibiliAPIError("视频页状态不是合法 JSON") from exc
 
+    def _video_playinfo(self, page_url: str) -> dict[str, Any]:
+        html = self._request_text(page_url, "https://www.bilibili.com/")
+        match = PLAYINFO_PATTERN.search(html)
+        if not match:
+            raise BilibiliAPIError("无法解析视频播放信息")
+        try:
+            return json.loads(match.group(1))
+        except json.JSONDecodeError as exc:
+            raise BilibiliAPIError("视频播放信息不是合法 JSON") from exc
+
     def _comment_wbi_script_keys(self, bvid: str, force_refresh: bool = False) -> tuple[str, str]:
         state = self._video_page_state(bvid)
         abtest = state.get("abtest") or {}
@@ -744,6 +1324,27 @@ class BilibiliClient:
         )
         return item_from_payload(data)
 
+    def audio_stream_for_item(self, item: VideoItem) -> AudioStream:
+        detail_item = item
+        if not detail_item.bvid:
+            ref = detail_item.bvid or (str(detail_item.aid) if detail_item.aid is not None else "")
+            if not ref:
+                raise BilibiliAPIError("当前视频缺少 BV 号，无法解析音频流")
+            detail_item = self.video(ref)
+        if not detail_item.bvid:
+            raise BilibiliAPIError("当前视频缺少 BV 号，无法解析音频流")
+        referer = detail_item.url or build_watch_url("bvid", detail_item.bvid)
+        playinfo = self._video_playinfo(referer)
+        return extract_audio_stream(
+            playinfo,
+            referer=referer,
+            user_agent=self.user_agent,
+            title=detail_item.title,
+        )
+
+    def audio_stream(self, ref: str) -> AudioStream:
+        return self.audio_stream_for_item(self.video(ref))
+
     def search_default(self) -> str:
         data = self._request_json(
             "https://api.bilibili.com/x/web-interface/wbi/search/default",
@@ -790,7 +1391,8 @@ class BilibiliCLI(cmd.Cmd):
     intro = (
         "Bilibili CLI 已启动。\n"
         "可用命令: hot [页码] [数量], search <关键词> [页码] [数量], "
-        "video <BV号|av号|URL|序号>, favorite <序号|BV号|URL>, favorites [open|remove], open <序号|BV号|URL>, exit"
+        "video <BV号|av号|URL|序号>, audio <序号|BV号|URL|pause|resume|toggle|stop>, "
+        "favorite <序号|BV号|URL>, favorites [open|remove], open <序号|BV号|URL>, exit"
     )
     prompt = "bili> "
 
@@ -908,6 +1510,27 @@ class BilibiliCLI(cmd.Cmd):
         webbrowser.open(url)
         print(f"已打开: {url}")
 
+    def do_audio(self, arg: str) -> None:
+        if not arg.strip():
+            print("用法: audio <序号|BV号|av号|URL|pause|resume|toggle|stop>")
+            return
+        action = arg.strip().lower()
+        if action == "pause":
+            print(pause_audio_playback())
+            return
+        if action == "resume":
+            print(resume_audio_playback())
+            return
+        if action == "toggle":
+            print(toggle_audio_playback())
+            return
+        if action == "stop":
+            print(stop_audio_playback())
+            return
+        item = self._resolve_item_for_favorite(arg.strip())
+        self.history_store.add_video(item)
+        print(play_audio_for_item(self.client, item))
+
     def do_exit(self, _: str) -> bool:
         return True
 
@@ -972,7 +1595,7 @@ def print_video_list(items: list[VideoItem], title: str) -> None:
         print(f"{index:>2}. {shorten(item.title, 72)}")
         print(f"    {meta}")
         print(f"    {item.bvid or item.aid} | {item.url}")
-    print("\n提示: 可用 `video 1` 查看详情，`favorite 1` 加入收藏，或 `open 1` 在浏览器中打开。")
+    print("\n提示: 可用 `video 1` 查看详情，`audio 1` 播放音频，`favorite 1` 加入收藏，或 `open 1` 在浏览器中打开。")
 
 
 def print_video_detail(item: VideoItem) -> None:
@@ -1022,7 +1645,7 @@ def print_favorites(history_store: HistoryStore) -> None:
     for index, item in enumerate(favorites, start=1):
         print(f"{index:>2}. {shorten(item.title, 72)}")
         print(f"    {item.author} | {item.bvid or item.aid} | {item.url}")
-    print("\n提示: 可用 `favorites open 1` 直接打开，或 `favorites remove 1` 从收藏夹移除。")
+    print("\n提示: 可用 `audio 1` 播放音频，`favorites open 1` 直接打开，或 `favorites remove 1` 从收藏夹移除。")
 
 
 def print_comments(item: VideoItem, comments: list[CommentItem]) -> None:
@@ -1396,6 +2019,17 @@ class BilibiliTUI:
             self.load_items()
         self.status = message
 
+    def play_selected_audio(self) -> None:
+        item = self.current_detail_item() if self.detail_mode else self.selected_item
+        if item is None:
+            self.status = "当前没有可播放音频的视频"
+            return
+        self.history_store.add_video(item)
+        self.status = audio_action_for_item(self.client, item)
+
+    def stop_audio(self) -> None:
+        self.status = stop_audio_playback()
+
     def open_selected(self) -> None:
         item = self.selected_item
         if item is None:
@@ -1469,6 +2103,8 @@ class BilibiliTUI:
             "v              查看历史",
             "m              查看收藏夹",
             "f              收藏 / 取消收藏当前视频",
+            "a              播放 / 暂停当前视频音频",
+            "x              停止当前音频",
             "n / p          下一页 / 上一页",
             "o              浏览器打开当前视频",
             "c              刷新评论预览",
@@ -1616,7 +2252,7 @@ class BilibiliTUI:
         if recent_videos:
             sections.append(("最近浏览", recent_videos[:3]))
 
-        sections.append(("快捷操作", ["Enter 查看详情", "f 收藏当前视频", "m 打开收藏夹"]))
+        sections.append(("快捷操作", ["Enter 查看详情", "a 播放/暂停音频", "x 停止音频", "f 收藏当前视频", "m 打开收藏夹"]))
 
         footer_y = y + height - 2
         available_body_lines = max(0, footer_y - content_y)
@@ -1794,7 +2430,7 @@ class BilibiliTUI:
             subtitle = "本地收藏，稍后可用 o 在浏览器继续看"
         else:
             subtitle = truncate_display(
-                f"当前选中 · {selected.author} · {human_count(selected.play)} 播放 · Enter 查看详情 · f 取消收藏 · o 浏览器打开",
+                f"当前选中 · {selected.author} · {human_count(selected.play)} 播放 · a 播放/暂停音频 · x 停止 · o 浏览器打开",
                 max(20, width - 2),
             )
         stdscr.addnstr(1, 0, subtitle, width - 1, self.attr_muted())
@@ -1852,7 +2488,7 @@ class BilibiliTUI:
         elif self.mode == "history":
             search_hint = "按 v 查看最近浏览"
         elif self.mode == "favorites":
-            search_hint = "按 f 取消收藏，o 打开，Enter 看详情"
+            search_hint = "按 a 播放/暂停音频，x 停止，o 打开"
         else:
             search_hint = "Tab 切换分区，1-9 直选，/ 搜索"
         hint_x = max(0, width - display_width(search_hint) - 1)
@@ -1910,7 +2546,7 @@ class BilibiliTUI:
         import curses
 
         header = " 详情页 "
-        header_right = "j/k 滚动  f 收藏  o 浏览器打开  c 刷新评论  Esc 返回  ? 帮助"
+        header_right = "j/k 滚动  a 播放/暂停  x 停止  f 收藏  o 浏览器打开  c 刷新评论  Esc 返回  ? 帮助"
         stdscr.addnstr(0, 0, header, width - 1, self.attr_header())
         right_x = max(0, width - display_width(header_right) - 1)
         stdscr.addnstr(0, right_x, header_right, width - right_x - 1, self.attr_header())
@@ -1951,9 +2587,9 @@ class BilibiliTUI:
 
         stdscr.hline(height - 2, 0, curses.ACS_HLINE, width)
         if self.mode == "favorites":
-            shortcuts = "j/k 移动  Enter 详情  f 取消收藏  o 浏览器打开  c 评论  b 返回  q 退出"
+            shortcuts = "j/k 移动  Enter 详情  a 播放/暂停  x 停止  f 取消收藏  o 浏览器打开  c 评论  b 返回  q 退出"
         else:
-            shortcuts = "Tab 分区  1-9 直选  / 搜索  f 收藏  m 收藏夹  c 评论  Enter 详情  q 退出"
+            shortcuts = "Tab 分区  1-9 直选  / 搜索  a 播放/暂停  x 停止  f 收藏  m 收藏夹  c 评论  Enter 详情  q 退出"
         stdscr.addnstr(height - 2, 2, shortcuts, width - 4, self.attr_muted())
         stdscr.addnstr(height - 1, 0, f"状态: {self.status}", width - 1, self.attr_accent())
         if self.show_help:
@@ -1993,6 +2629,10 @@ class BilibiliTUI:
                         self.detail_scroll += 10
                     elif key == ord("o"):
                         self.open_selected()
+                    elif key == ord("a"):
+                        self.play_selected_audio()
+                    elif key == ord("x"):
+                        self.stop_audio()
                     elif key == ord("f"):
                         self.toggle_selected_favorite()
                     elif key == ord("c"):
@@ -2029,6 +2669,10 @@ class BilibiliTUI:
                     self.load_selected_detail(enter_detail_mode=True)
                 elif key == ord("o"):
                     self.open_selected()
+                elif key == ord("a"):
+                    self.play_selected_audio()
+                elif key == ord("x"):
+                    self.stop_audio()
                 elif key == ord("r"):
                     self.refresh_current_view()
                 elif key == ord("c"):
@@ -2123,6 +2767,9 @@ def build_parser() -> argparse.ArgumentParser:
     open_parser = subparsers.add_parser("open", help="浏览器打开视频")
     open_parser.add_argument("ref", help="BV号 / av号 / URL")
 
+    audio_parser = subparsers.add_parser("audio", help="播放或控制视频音频")
+    audio_parser.add_argument("ref", help="BV号 / av号 / URL / pause / resume / toggle / stop")
+
     favorite_parser = subparsers.add_parser("favorite", help="将视频加入收藏夹")
     favorite_parser.add_argument("ref", help="BV号 / av号 / URL")
 
@@ -2136,6 +2783,12 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("history", help="查看最近搜索和最近浏览")
     subparsers.add_parser("repl", help="进入交互模式")
     subparsers.add_parser("tui", help="进入全屏终端界面")
+
+    audio_worker_parser = subparsers.add_parser("audio-worker", help=argparse.SUPPRESS)
+    audio_worker_parser.add_argument("--url", required=True, help=argparse.SUPPRESS)
+    audio_worker_parser.add_argument("--referer", required=True, help=argparse.SUPPRESS)
+    audio_worker_parser.add_argument("--user-agent", required=True, help=argparse.SUPPRESS)
+    audio_worker_parser.add_argument("--title", default="", help=argparse.SUPPRESS)
     return parser
 
 
@@ -2175,6 +2828,24 @@ def run_once(args: argparse.Namespace, client: BilibiliClient, history_store: Hi
         url = open_video_target(args.ref)
         print(f"已打开: {url}")
         return 0
+    if args.command == "audio":
+        action = args.ref.lower()
+        if action == "pause":
+            print(pause_audio_playback())
+            return 0
+        if action == "resume":
+            print(resume_audio_playback())
+            return 0
+        if action == "toggle":
+            print(toggle_audio_playback())
+            return 0
+        if action == "stop":
+            print(stop_audio_playback())
+            return 0
+        item = client.video(args.ref)
+        history_store.add_video(item)
+        print(play_audio_for_item(client, item))
+        return 0
     if args.command == "favorite":
         item = client.video(args.ref)
         added = history_store.add_favorite(item)
@@ -2202,6 +2873,8 @@ def run_once(args: argparse.Namespace, client: BilibiliClient, history_store: Hi
         return 0
     if args.command == "tui":
         return run_tui(client, history_store)
+    if args.command == "audio-worker":
+        return run_audio_worker(args.url, args.referer, args.user_agent, args.title)
     BilibiliCLI(client, history_store).cmdloop()
     return 0
 
