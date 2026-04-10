@@ -343,6 +343,24 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(cli.BilibiliClient().trending_keywords(2), ["原神", "中文"])
 
     @mock.patch.object(cli.BilibiliClient, "_open")
+    def test_region_ranking_honors_day_page_and_limit(self, mock_open: mock.MagicMock) -> None:
+        mock_open.return_value = self.make_response(
+            {
+                "code": 0,
+                "data": [
+                    {"title": "排行榜 1", "author": "UP1", "bvid": "BV1xx411c7m1"},
+                    {"title": "排行榜 2", "author": "UP2", "bvid": "BV1xx411c7m2"},
+                    {"title": "排行榜 3", "author": "UP3", "bvid": "BV1xx411c7m3"},
+                ],
+            }
+        )
+        items = cli.BilibiliClient().region_ranking(rid=181, day=7, page=2, page_size=1)
+        request = mock_open.call_args.args[0]
+        self.assertIn("rid=181", request.full_url)
+        self.assertIn("day=7", request.full_url)
+        self.assertEqual([item.title for item in items], ["排行榜 2"])
+
+    @mock.patch.object(cli.BilibiliClient, "_open")
     def test_comments_extracts_reply_items(self, mock_open: mock.MagicMock) -> None:
         mock_open.return_value = self.make_response(
             {
@@ -667,6 +685,30 @@ class ShellTests(unittest.TestCase):
         args = cli.build_parser().parse_args(["audio", "BV1xx411c7mu"])
         self.assertEqual(args.command, "audio")
 
+    def test_parser_supports_rank_command(self) -> None:
+        args = cli.build_parser().parse_args(["rank", "动画", "--day", "7", "--page", "2", "--limit", "3"])
+        self.assertEqual(args.command, "rank")
+        self.assertEqual(args.region, "动画")
+        self.assertEqual(args.day, 7)
+        self.assertEqual(args.page, 2)
+        self.assertEqual(args.limit, 3)
+
+    def test_parser_supports_ranking_alias_with_rid(self) -> None:
+        args = cli.build_parser().parse_args(["ranking", "--rid", "181", "--day", "7", "--limit", "4"])
+        self.assertEqual(args.command, "ranking")
+        self.assertEqual(args.rid, 181)
+        self.assertEqual(args.day, 7)
+        self.assertEqual(args.limit, 4)
+
+    def test_parser_supports_bangumi_command_with_index_filters(self) -> None:
+        args = cli.build_parser().parse_args(["bangumi", "番剧", "--index", "--area", "大陆", "--page", "2", "--limit", "4"])
+        self.assertEqual(args.command, "bangumi")
+        self.assertEqual(args.category, "番剧")
+        self.assertTrue(args.index)
+        self.assertEqual(args.area, "大陆")
+        self.assertEqual(args.page, 2)
+        self.assertEqual(args.limit, 4)
+
     def test_resolve_target_by_index(self) -> None:
         shell = cli.BilibiliCLI(cli.BilibiliClient(), self.make_store())
         shell.last_items = [
@@ -753,6 +795,56 @@ class ShellTests(unittest.TestCase):
         mock_stop_audio.assert_called_once()
         self.assertIn("已停止音频", stdout.getvalue())
 
+    def test_rank_command_updates_last_items(self) -> None:
+        item = cli.VideoItem(
+            title="动画排行",
+            author="UP",
+            bvid="BV1xx411c7mu",
+            aid=106,
+            duration="1:00",
+            play=1,
+            danmaku=2,
+            like=3,
+            favorite=4,
+            pubdate=1710000000,
+            description="",
+            url="https://www.bilibili.com/video/BV1xx411c7mu",
+            raw={},
+        )
+        client = mock.MagicMock(spec=cli.BilibiliClient)
+        client.region_ranking.return_value = [item]
+        shell = cli.BilibiliCLI(client, self.make_store())
+        with mock.patch("sys.stdout", new=io.StringIO()) as stdout:
+            shell.onecmd("rank 动画 --day 7 --page 2 --limit 3")
+        client.region_ranking.assert_called_once()
+        self.assertEqual(shell.last_items, [item])
+        self.assertIn("动画排行", stdout.getvalue())
+
+    def test_bangumi_command_updates_last_items(self) -> None:
+        item = cli.VideoItem(
+            title="番剧更新",
+            author="番剧官方",
+            bvid=None,
+            aid=None,
+            duration="24:00",
+            play=1,
+            danmaku=2,
+            like=3,
+            favorite=4,
+            pubdate=1710000000,
+            description="",
+            url="https://www.bilibili.com/bangumi/play/ep1",
+            raw={},
+        )
+        client = mock.MagicMock(spec=cli.BilibiliClient)
+        client.bangumi.return_value = [item]
+        shell = cli.BilibiliCLI(client, self.make_store())
+        with mock.patch("sys.stdout", new=io.StringIO()) as stdout:
+            shell.onecmd("bangumi 番剧 --index --area 大陆 --page 2 --limit 3")
+        client.bangumi.assert_called_once()
+        self.assertEqual(shell.last_items, [item])
+        self.assertIn("番剧更新", stdout.getvalue())
+
     def test_resolve_favorite_item_by_index(self) -> None:
         shell = cli.BilibiliCLI(cli.BilibiliClient(), self.make_store())
         item = cli.VideoItem(
@@ -772,6 +864,50 @@ class ShellTests(unittest.TestCase):
         )
         shell.history_store.add_favorite(item)
         self.assertEqual(shell._resolve_favorite_item("1").bvid, "BV1xx411c7mu")
+
+
+class CommandDispatchTests(unittest.TestCase):
+    def make_store(self) -> cli.HistoryStore:
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        return cli.HistoryStore(path=f"{temp_dir.name}/history.json")
+
+    def make_item(self, title: str = "标题", bvid: str = "BV1xx411c7mu") -> cli.VideoItem:
+        return cli.VideoItem(
+            title=title,
+            author="UP",
+            bvid=bvid,
+            aid=106,
+            duration="1:00",
+            play=1,
+            danmaku=2,
+            like=3,
+            favorite=4,
+            pubdate=1710000000,
+            description="简介",
+            url=f"https://www.bilibili.com/video/{bvid}",
+            raw={},
+        )
+
+    @mock.patch.object(cli, "print_video_list")
+    def test_run_once_rank_uses_region_ranking(self, mock_print_video_list: mock.MagicMock) -> None:
+        client = mock.MagicMock(spec=cli.BilibiliClient)
+        client.region_ranking.return_value = [self.make_item("影视排行")]
+        args = cli.build_parser().parse_args(["rank", "--rid", "181", "--day", "7", "--page", "2", "--limit", "3"])
+        result = cli.run_once(args, client, self.make_store())
+        self.assertEqual(result, 0)
+        client.region_ranking.assert_called_once_with(rid=181, day=7, page_size=3, page=2)
+        mock_print_video_list.assert_called_once()
+
+    @mock.patch.object(cli, "print_video_list")
+    def test_run_once_bangumi_uses_client_bangumi(self, mock_print_video_list: mock.MagicMock) -> None:
+        client = mock.MagicMock(spec=cli.BilibiliClient)
+        client.bangumi.return_value = [self.make_item("番剧索引")]
+        args = cli.build_parser().parse_args(["bangumi", "番剧", "--index", "--area", "大陆", "--page", "2", "--limit", "4"])
+        result = cli.run_once(args, client, self.make_store())
+        self.assertEqual(result, 0)
+        client.bangumi.assert_called_once()
+        mock_print_video_list.assert_called_once()
 
 
 class HistoryStoreTests(unittest.TestCase):
