@@ -95,7 +95,7 @@ COMMON_MOJIBAKE_CHARS = set("ÃÂÐÑãäåæçèéêëìíîïðñòóôõöù�
 INITIAL_STATE_PATTERN = re.compile(r"window\.__INITIAL_STATE__=(\{.*?\});\(function", re.S)
 INITIAL_STATE_FALLBACK_PATTERN = re.compile(r"window\.__INITIAL_STATE__=(\{.*?\})\s*var\s+isBilibili", re.S)
 COMMENT_WBI_KEYS_PATTERN = re.compile(r'encWbiKeys:\{wbiImgKey:"([^"]+)",wbiSubKey:"([^"]+)"\}')
-PLAYINFO_PATTERN = re.compile(r"window\.__playinfo__=(\{.*?\})</script>", re.S)
+PLAYINFO_PATTERN = re.compile(r"window\.__playinfo__\s*=\s*(\{.*?\})\s*</script>", re.S)
 WBI_KEY_SANITIZE_PATTERN = re.compile(r"[!'()*]")
 COMMENT_WEB_LOCATION = 1315875
 COMMENT_WBI_MIXIN_TABLE = [
@@ -436,6 +436,37 @@ def build_watch_url(ref_type: str, value: str) -> str:
     return f"https://www.bilibili.com/video/{value}" if ref_type == "bvid" else f"https://www.bilibili.com/video/av{value}"
 
 
+def bangumi_episode_id_from_item(item: VideoItem | None) -> int | None:
+    if item is None:
+        return None
+    raw = item.raw or {}
+    episode_id = raw.get("episode_id") or raw.get("ep_id")
+    if episode_id in (None, ""):
+        first_ep = raw.get("first_ep") or {}
+        if isinstance(first_ep, dict):
+            episode_id = first_ep.get("ep_id") or first_ep.get("episode_id")
+    if episode_id not in (None, ""):
+        return int(episode_id)
+    match = re.search(r"/ep(\d+)", item.url or "")
+    if match:
+        return int(match.group(1))
+    return None
+
+
+def item_ref_label(item: VideoItem) -> str:
+    if item.bvid:
+        return item.bvid
+    if item.aid is not None:
+        return f"av{item.aid}"
+    episode_id = bangumi_episode_id_from_item(item)
+    if episode_id is not None:
+        return f"ep{episode_id}"
+    season_id = (item.raw or {}).get("season_id")
+    if season_id not in (None, ""):
+        return f"ss{season_id}"
+    return "-"
+
+
 def resolve_region_rid(region: str | None = None, rid: int | None = None) -> tuple[int, str]:
     if rid is not None:
         label = next((str(channel["label"]) for channel in HOME_CHANNELS if channel.get("rid") == rid), f"分区 {rid}")
@@ -503,7 +534,13 @@ def extract_audio_stream(
     user_agent: str,
     title: str,
 ) -> AudioStream:
-    data = playinfo.get("data") or {}
+    data = playinfo.get("data")
+    if not isinstance(data, dict):
+        result = playinfo.get("result")
+        if isinstance(result, dict):
+            data = result
+    if not isinstance(data, dict):
+        data = playinfo if isinstance(playinfo, dict) else {}
     dash = data.get("dash") or {}
     audio_candidates: list[dict[str, Any]] = []
     for entry in dash.get("audio") or []:
@@ -1544,12 +1581,23 @@ class BilibiliClient:
         )
         return item_from_payload(data)
 
+    def _bangumi_playinfo(self, item: VideoItem) -> dict[str, Any]:
+        referer = item.url or "https://www.bilibili.com/bangumi/"
+        episode_id = bangumi_episode_id_from_item(item)
+        if episode_id is None:
+            raise BilibiliAPIError("当前番剧条目缺少 EP 标识，无法解析音频流")
+        return self._request_json(
+            "https://api.bilibili.com/pgc/player/web/playurl",
+            {"ep_id": episode_id, "fnval": 4048, "fourk": 1},
+            referer,
+        )
+
     def audio_stream_for_item(self, item: VideoItem) -> AudioStream:
         detail_item = item
         if not detail_item.bvid:
             referer = detail_item.url or ""
             if referer and "/bangumi/" in referer:
-                playinfo = self._video_playinfo(referer)
+                playinfo = self._bangumi_playinfo(detail_item)
                 return extract_audio_stream(
                     playinfo,
                     referer=referer,
@@ -1695,11 +1743,20 @@ class BilibiliCLI(cmd.Cmd):
         print_video_list(items, build_bangumi_title(str(meta["label"]), index=args.index, page=args.page, area=args.area))
 
     def do_video(self, arg: str) -> None:
-        if not arg.strip():
+        target = arg.strip()
+        if not target:
             print("用法: video <BV号|av号|URL|序号>")
             return
-        target = self._resolve_target(arg.strip())
-        item = self.client.video(target)
+        if target.isdigit() and self.last_items:
+            index = int(target) - 1
+            if index < 0 or index >= len(self.last_items):
+                raise ValueError(f"序号超出范围: {target}")
+            last_item = self.last_items[index]
+            if not last_item.bvid and last_item.aid is None:
+                self.history_store.add_video(last_item)
+                print_video_detail(last_item)
+                return
+        item = self.client.video(self._resolve_target(target))
         self.history_store.add_video(item)
         print_video_detail(item)
 
@@ -1858,7 +1915,7 @@ def print_video_list(items: list[VideoItem], title: str) -> None:
         )
         print(f"{index:>2}. {shorten(item.title, 72)}")
         print(f"    {meta}")
-        print(f"    {item.bvid or item.aid} | {item.url}")
+        print(f"    {item_ref_label(item)} | {item.url}")
     print("\n提示: 可用 `video 1` 查看详情，`audio 1` 播放音频，`favorite 1` 加入收藏，或 `open 1` 在浏览器中打开。")
 
 

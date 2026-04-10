@@ -92,6 +92,42 @@ class FormattingTests(unittest.TestCase):
             "https://www.bilibili.com/video/BV1xx411c7mu",
         )
 
+    def test_item_ref_label_prefers_bangumi_episode_when_video_ids_missing(self) -> None:
+        item = cli.VideoItem(
+            title="番剧",
+            author="官方",
+            bvid=None,
+            aid=None,
+            duration="24:00",
+            play=1,
+            danmaku=2,
+            like=3,
+            favorite=4,
+            pubdate=1710000000,
+            description="",
+            url="https://www.bilibili.com/bangumi/play/ep123",
+            raw={"episode_id": 123, "season_id": 456},
+        )
+        self.assertEqual(cli.item_ref_label(item), "ep123")
+
+    def test_bangumi_episode_id_from_item_falls_back_to_first_ep(self) -> None:
+        item = cli.VideoItem(
+            title="番剧",
+            author="官方",
+            bvid=None,
+            aid=None,
+            duration="24:00",
+            play=1,
+            danmaku=2,
+            like=3,
+            favorite=4,
+            pubdate=1710000000,
+            description="",
+            url="https://www.bilibili.com/bangumi/play/ss456",
+            raw={"first_ep": {"ep_id": 789}},
+        )
+        self.assertEqual(cli.bangumi_episode_id_from_item(item), 789)
+
     def test_build_detail_lines_contains_core_metadata(self) -> None:
         lines = cli.build_detail_lines(
             cli.VideoItem(
@@ -383,6 +419,57 @@ class ClientTests(unittest.TestCase):
         self.assertIn("/pgc/web/timeline/v2", request.full_url)
         self.assertEqual(items[0].title, "番剧更新")
         self.assertEqual(items[0].url, "https://www.bilibili.com/bangumi/play/ep1")
+
+    def test_audio_stream_for_bangumi_item_uses_playurl_api(self) -> None:
+        client = cli.BilibiliClient()
+        client._request_json = mock.MagicMock(return_value={"durl": [{"url": "https://example.com/bangumi.mp4"}]})
+        item = cli.VideoItem(
+            title="番剧更新",
+            author="官方",
+            bvid=None,
+            aid=None,
+            duration="24:00",
+            play=1,
+            danmaku=2,
+            like=3,
+            favorite=4,
+            pubdate=1710000000,
+            description="",
+            url="https://www.bilibili.com/bangumi/play/ep123",
+            raw={"episode_id": 123},
+        )
+        stream = client.audio_stream_for_item(item)
+        client._request_json.assert_called_once_with(
+            "https://api.bilibili.com/pgc/player/web/playurl",
+            {"ep_id": 123, "fnval": 4048, "fourk": 1},
+            "https://www.bilibili.com/bangumi/play/ep123",
+        )
+        self.assertEqual(stream.url, "https://example.com/bangumi.mp4")
+        self.assertEqual(stream.source_kind, "media")
+
+    def test_audio_stream_for_bangumi_index_item_ignores_string_result_field(self) -> None:
+        client = cli.BilibiliClient()
+        client._request_json = mock.MagicMock(
+            return_value={"result": "suee", "durl": [{"url": "https://example.com/index-bangumi.mp4"}]}
+        )
+        item = cli.VideoItem(
+            title="番剧索引",
+            author="官方",
+            bvid=None,
+            aid=None,
+            duration="24:00",
+            play=1,
+            danmaku=2,
+            like=3,
+            favorite=4,
+            pubdate=1710000000,
+            description="",
+            url="https://www.bilibili.com/bangumi/play/ss456",
+            raw={"first_ep": {"ep_id": 789}},
+        )
+        stream = client.audio_stream_for_item(item)
+        self.assertEqual(stream.url, "https://example.com/index-bangumi.mp4")
+        self.assertEqual(stream.source_kind, "media")
 
     @mock.patch.object(cli.BilibiliClient, "_open")
     def test_comments_extracts_reply_items(self, mock_open: mock.MagicMock) -> None:
@@ -867,6 +954,30 @@ class ShellTests(unittest.TestCase):
             shell.onecmd("bangumi 番剧 --index --area 大陆 --page 2 --limit 3")
         client.bangumi.assert_called_once()
         self.assertEqual(shell.last_items, [item])
+        self.assertIn("番剧更新", stdout.getvalue())
+
+    def test_do_video_by_index_uses_last_bangumi_item_without_lookup(self) -> None:
+        item = cli.VideoItem(
+            title="番剧更新",
+            author="番剧官方",
+            bvid=None,
+            aid=None,
+            duration="24:00",
+            play=1,
+            danmaku=2,
+            like=3,
+            favorite=4,
+            pubdate=1710000000,
+            description="简介",
+            url="https://www.bilibili.com/bangumi/play/ep1",
+            raw={"episode_id": 1},
+        )
+        client = mock.MagicMock(spec=cli.BilibiliClient)
+        shell = cli.BilibiliCLI(client, self.make_store())
+        shell.last_items = [item]
+        with mock.patch("sys.stdout", new=io.StringIO()) as stdout:
+            shell.do_video("1")
+        client.video.assert_not_called()
         self.assertIn("番剧更新", stdout.getvalue())
 
     def test_resolve_favorite_item_by_index(self) -> None:
