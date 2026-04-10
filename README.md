@@ -27,6 +27,8 @@ git clone https://github.com/teee32/biliterminal.git && cd biliterminal && ./bil
 
 ```bash
 ./biliterminal recommend -n 5
+./biliterminal rank music --day 7
+./biliterminal bangumi 番剧 --index -n 5
 ./biliterminal search 中文 -n 5
 ./biliterminal audio BV19K9uBmEdx
 ./biliterminal audio pause
@@ -91,6 +93,8 @@ open dist/BiliTerminal.app
 ```bash
 python3 bili_terminal/bilibili_cli.py hot -n 5
 python3 bili_terminal/bilibili_cli.py recommend -n 5
+python3 bili_terminal/bilibili_cli.py rank --rid 3 --day 7
+python3 bili_terminal/bilibili_cli.py bangumi 番剧 --index -n 5
 python3 bili_terminal/bilibili_cli.py precious -n 5
 python3 bili_terminal/bilibili_cli.py trending -n 10
 python3 bili_terminal/bilibili_cli.py search 原神 -n 5
@@ -107,6 +111,8 @@ python3 bili_terminal/bilibili_cli.py history
 python3 bili_terminal/bilibili_cli.py repl
 python3 bili_terminal/bilibili_cli.py tui
 python3 -m bili_terminal recommend -n 5
+python3 -m bili_terminal rank music --day 7
+python3 -m bili_terminal bangumi 番剧 --index -n 5
 python3 -m bili_terminal tui
 python3 -m unittest discover -s bili_terminal/tests -v
 ```

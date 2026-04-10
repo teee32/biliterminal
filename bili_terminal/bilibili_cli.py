@@ -50,7 +50,42 @@ HOME_CHANNELS: list[dict[str, Any]] = [
     {"label": "影视", "source": "region", "rid": 181},
     {"label": "科技", "source": "region", "rid": 188},
     {"label": "音乐", "source": "region", "rid": 3},
+    {"label": "番剧", "source": "bangumi", "category": "番剧"},
 ]
+
+RANK_REGION_ALIASES: dict[str, tuple[int, str]] = {
+    "动画": (1, "动画"),
+    "anime": (1, "动画"),
+    "音乐": (3, "音乐"),
+    "music": (3, "音乐"),
+    "游戏": (4, "游戏"),
+    "game": (4, "游戏"),
+    "games": (4, "游戏"),
+    "知识": (36, "知识"),
+    "knowledge": (36, "知识"),
+    "影视": (181, "影视"),
+    "movie": (181, "影视"),
+    "tv": (181, "影视"),
+    "科技": (188, "科技"),
+    "tech": (188, "科技"),
+}
+
+BANGUMI_CATEGORY_META: dict[str, dict[str, Any]] = {
+    "番剧": {"label": "番剧", "season_type": 1},
+    "影视": {"label": "影视", "season_type": 2},
+    "国创": {"label": "国创", "season_type": 4},
+}
+
+BANGUMI_CATEGORY_ALIASES: dict[str, str] = {
+    "anime": "番剧",
+    "bangumi": "番剧",
+    "番剧": "番剧",
+    "movie": "影视",
+    "tv": "影视",
+    "影视": "影视",
+    "guochuang": "国创",
+    "国创": "国创",
+}
 
 BVID_PATTERN = re.compile(r"(BV[0-9A-Za-z]{10})")
 AID_PATTERN = re.compile(r"\bav(\d+)\b", re.IGNORECASE)
@@ -304,6 +339,29 @@ def human_count(value: int | None) -> str:
     return str(value)
 
 
+def parse_count_value(value: Any) -> int:
+    if value in (None, ""):
+        return 0
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)):
+        return int(value)
+    text = compact_whitespace(str(value)).replace(",", "")
+    if not text:
+        return 0
+    multiplier = 1
+    if text.endswith("亿"):
+        multiplier = 100_000_000
+        text = text[:-1]
+    elif text.endswith("万"):
+        multiplier = 10_000
+        text = text[:-1]
+    try:
+        return int(float(text) * multiplier)
+    except ValueError:
+        return 0
+
+
 def format_timestamp(value: int | None) -> str:
     if not value:
         return "-"
@@ -353,6 +411,18 @@ def build_video_url(payload: dict[str, Any]) -> str:
     redirect_url = payload.get("redirect_url")
     if redirect_url:
         return redirect_url
+    link = payload.get("link")
+    if link:
+        return link
+    episode_id = payload.get("episode_id") or payload.get("ep_id")
+    if episode_id:
+        return f"https://www.bilibili.com/bangumi/play/ep{episode_id}"
+    season_id = payload.get("season_id")
+    if season_id:
+        return f"https://www.bilibili.com/bangumi/play/ss{season_id}"
+    media_id = payload.get("media_id")
+    if media_id:
+        return f"https://www.bilibili.com/bangumi/media/md{media_id}"
     bvid = payload.get("bvid")
     if bvid:
         return f"https://www.bilibili.com/video/{bvid}"
@@ -364,6 +434,59 @@ def build_video_url(payload: dict[str, Any]) -> str:
 
 def build_watch_url(ref_type: str, value: str) -> str:
     return f"https://www.bilibili.com/video/{value}" if ref_type == "bvid" else f"https://www.bilibili.com/video/av{value}"
+
+
+def resolve_region_rid(region: str | None = None, rid: int | None = None) -> tuple[int, str]:
+    if rid is not None:
+        label = next((str(channel["label"]) for channel in HOME_CHANNELS if channel.get("rid") == rid), f"分区 {rid}")
+        if region and region.strip():
+            label = region.strip()
+        return rid, label
+    if not region or not region.strip():
+        raise ValueError("请提供分区名，或用 --rid 指定分区 ID")
+    resolved = RANK_REGION_ALIASES.get(region.strip().lower())
+    if resolved is None:
+        available = "、".join(sorted({label for _, label in RANK_REGION_ALIASES.values()}))
+        raise ValueError(f"未知分区: {region}（可用: {available}，或直接传 --rid）")
+    return resolved
+
+
+def resolve_bangumi_category(category: str | None = None) -> dict[str, Any]:
+    normalized = (category or "番剧").strip().lower()
+    key = BANGUMI_CATEGORY_ALIASES.get(normalized, "番剧")
+    return BANGUMI_CATEGORY_META[key]
+
+
+def build_bangumi_title(category: str, *, index: bool = False, page: int = 1, area: str | None = None) -> str:
+    mode = "索引" if index else "更新"
+    suffix = f" · {area}" if area else ""
+    return f"{category}{mode}{suffix} | 第 {page} 页"
+
+
+def add_rank_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+    parser.add_argument("region", nargs="?", help="分区名，如 动画 / 音乐 / 游戏 / 影视")
+    parser.add_argument("--rid", type=int, help="分区 ID，优先级高于分区名")
+    parser.add_argument("--day", type=int, choices=(1, 3, 7), default=3, help="排行周期天数")
+    parser.add_argument("-p", "--page", type=int, default=1, help="页码")
+    parser.add_argument("-n", "--limit", type=int, default=10, help="数量")
+    return parser
+
+
+def build_rank_argument_parser(*, prog: str = "rank", add_help: bool = False) -> argparse.ArgumentParser:
+    return add_rank_arguments(argparse.ArgumentParser(prog=prog, add_help=add_help))
+
+
+def add_bangumi_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+    parser.add_argument("category", nargs="?", default="番剧", help="分类：番剧 / 国创 / 影视")
+    parser.add_argument("--index", action="store_true", help="切到索引模式")
+    parser.add_argument("--area", help="地区筛选（当前优先用于索引/展示）")
+    parser.add_argument("-p", "--page", type=int, default=1, help="页码")
+    parser.add_argument("-n", "--limit", type=int, default=10, help="数量")
+    return parser
+
+
+def build_bangumi_argument_parser(*, prog: str = "bangumi", add_help: bool = False) -> argparse.ArgumentParser:
+    return add_bangumi_arguments(argparse.ArgumentParser(prog=prog, add_help=add_help))
 
 
 def open_video_target(target: str) -> str:
@@ -932,12 +1055,53 @@ def item_from_payload(payload: dict[str, Any]) -> VideoItem:
         bvid=payload.get("bvid"),
         aid=payload.get("aid"),
         duration=normalize_duration(payload.get("duration")),
-        play=int(payload.get("play") or stat.get("view") or 0),
-        danmaku=int(payload.get("video_review") or payload.get("danmaku") or stat.get("danmaku") or 0),
-        like=int(payload.get("like") or stat.get("like") or 0),
-        favorite=int(payload.get("favorites") or stat.get("favorite") or 0),
+        play=parse_count_value(payload.get("play") or stat.get("view") or 0),
+        danmaku=parse_count_value(payload.get("video_review") or payload.get("danmaku") or stat.get("danmaku") or 0),
+        like=parse_count_value(payload.get("like") or stat.get("like") or 0),
+        favorite=parse_count_value(payload.get("favorites") or stat.get("favorite") or 0),
         pubdate=payload.get("pubdate"),
         description=compact_whitespace(payload.get("description") or payload.get("desc") or ""),
+        url=build_video_url(payload),
+        raw=payload,
+    )
+
+
+def item_from_bangumi_payload(payload: dict[str, Any], *, category_label: str) -> VideoItem:
+    stat = payload.get("stat") or {}
+    new_ep = payload.get("new_ep") or {}
+    author = compact_whitespace(
+        payload.get("subTitle")
+        or payload.get("subtitle")
+        or payload.get("pub_index")
+        or (new_ep.get("index_show") if isinstance(new_ep, dict) else "")
+        or category_label
+    )
+    duration = (
+        payload.get("pub_index")
+        or payload.get("index_show")
+        or payload.get("pub_time")
+        or (new_ep.get("index_show") if isinstance(new_ep, dict) else None)
+        or payload.get("duration")
+        or "-"
+    )
+    return VideoItem(
+        title=strip_html(payload.get("title", "")),
+        author=author,
+        bvid=payload.get("bvid"),
+        aid=payload.get("aid"),
+        duration=normalize_duration(duration),
+        play=parse_count_value(payload.get("plays") or stat.get("view") or 0),
+        danmaku=parse_count_value(payload.get("danmaku") or stat.get("danmaku") or 0),
+        like=parse_count_value(payload.get("likes") or stat.get("like") or 0),
+        favorite=parse_count_value(payload.get("favorites") or stat.get("favorite") or 0),
+        pubdate=payload.get("pub_ts") or payload.get("pubdate"),
+        description=compact_whitespace(
+            payload.get("evaluate")
+            or payload.get("subTitle")
+            or payload.get("subtitle")
+            or payload.get("delay_reason")
+            or ""
+        ),
         url=build_video_url(payload),
         raw=payload,
     )
@@ -1186,6 +1350,8 @@ class BilibiliClient:
         if code != 0:
             raise BilibiliAPIError(f"Bilibili 接口错误 code={code}: {payload.get('message', 'unknown')}")
         data = payload.get("data")
+        if data is None:
+            data = payload.get("result")
         return data if data is not None else {}
 
     def _video_page_state(self, bvid: str) -> dict[str, Any]:
@@ -1301,6 +1467,60 @@ class BilibiliClient:
         start = max(0, (page - 1) * page_size)
         return [item_from_payload(item) for item in data[start : start + page_size]]
 
+    def bangumi(
+        self,
+        category: str = "番剧",
+        *,
+        index: bool = False,
+        area: str | None = None,
+        page: int = 1,
+        page_size: int = 10,
+    ) -> list[VideoItem]:
+        meta = resolve_bangumi_category(category)
+        season_type = int(meta["season_type"])
+        if index:
+            data = self._request_json(
+                "https://api.bilibili.com/pgc/season/index/result",
+                {"season_type": season_type, "page": page, "pagesize": page_size, "type": 1},
+                "https://www.bilibili.com/anime/index/",
+            )
+            raw_items = list(data.get("list") or [])
+        else:
+            data = self._request_json(
+                "https://api.bilibili.com/pgc/web/timeline/v2",
+                {"season_type": season_type, "day_before": 0, "day_after": 6},
+                "https://www.bilibili.com/anime/timeline/",
+            )
+            candidates: list[dict[str, Any]] = []
+            candidates.extend(item for item in data.get("latest") or [] if isinstance(item, dict))
+            for timeline_entry in data.get("timeline") or []:
+                if not isinstance(timeline_entry, dict):
+                    continue
+                for item in timeline_entry.get("episodes") or timeline_entry.get("seasons") or []:
+                    if isinstance(item, dict):
+                        candidates.append(item)
+
+            raw_items = []
+            seen_urls: set[str] = set()
+            for item in candidates:
+                url = build_video_url(item)
+                if url in seen_urls:
+                    continue
+                seen_urls.add(url)
+                raw_items.append(item)
+            start = max(0, (page - 1) * page_size)
+            raw_items = raw_items[start : start + page_size]
+
+        items = [item_from_bangumi_payload(item, category_label=str(meta["label"])) for item in raw_items]
+        if area:
+            keyword = area.strip()
+            filtered = [
+                item for item in items if keyword in item.title or keyword in item.author or keyword in item.description
+            ]
+            if filtered:
+                items = filtered
+        return items[:page_size]
+
     def search(self, keyword: str, page: int = 1, page_size: int = 10) -> list[VideoItem]:
         search_referer = f"https://search.bilibili.com/all?keyword={urllib.parse.quote(keyword)}"
         data = self._request_json(
@@ -1327,6 +1547,15 @@ class BilibiliClient:
     def audio_stream_for_item(self, item: VideoItem) -> AudioStream:
         detail_item = item
         if not detail_item.bvid:
+            referer = detail_item.url or ""
+            if referer and "/bangumi/" in referer:
+                playinfo = self._video_playinfo(referer)
+                return extract_audio_stream(
+                    playinfo,
+                    referer=referer,
+                    user_agent=self.user_agent,
+                    title=detail_item.title,
+                )
             ref = detail_item.bvid or (str(detail_item.aid) if detail_item.aid is not None else "")
             if not ref:
                 raise BilibiliAPIError("当前视频缺少 BV 号，无法解析音频流")
@@ -1391,6 +1620,7 @@ class BilibiliCLI(cmd.Cmd):
     intro = (
         "Bilibili CLI 已启动。\n"
         "可用命令: hot [页码] [数量], search <关键词> [页码] [数量], "
+        "rank [分区|--rid] [--day] [--page] [--limit], bangumi [分类] [--index] [--area] [--page] [--limit], "
         "video <BV号|av号|URL|序号>, audio <序号|BV号|URL|pause|resume|toggle|stop>, "
         "favorite <序号|BV号|URL>, favorites [open|remove], open <序号|BV号|URL>, exit"
     )
@@ -1429,6 +1659,40 @@ class BilibiliCLI(cmd.Cmd):
         self.history_store.add_keyword(keyword)
         self.last_items = items
         print_video_list(items, f"搜索结果: {keyword} | 第 {page} 页")
+
+    def do_rank(self, arg: str) -> None:
+        try:
+            args = build_rank_argument_parser().parse_args(shlex.split(arg))
+            rid, label = resolve_region_rid(args.region, args.rid)
+        except SystemExit:
+            print("用法: rank [分区名] [--rid RID] [--day 1|3|7] [--page N] [--limit N]")
+            return
+        except ValueError as exc:
+            print(str(exc))
+            return
+        items = self.client.region_ranking(rid=rid, day=args.day, page=args.page, page_size=args.limit)
+        self.last_items = items
+        print_video_list(items, f"{label} 排行榜 | 第 {args.page} 页")
+
+    def do_ranking(self, arg: str) -> None:
+        self.do_rank(arg)
+
+    def do_bangumi(self, arg: str) -> None:
+        try:
+            args = build_bangumi_argument_parser().parse_args(shlex.split(arg))
+        except SystemExit:
+            print("用法: bangumi [分类] [--index] [--area 地区] [--page N] [--limit N]")
+            return
+        meta = resolve_bangumi_category(args.category)
+        items = self.client.bangumi(
+            category=str(meta["label"]),
+            index=args.index,
+            area=args.area,
+            page=args.page,
+            page_size=args.limit,
+        )
+        self.last_items = items
+        print_video_list(items, build_bangumi_title(str(meta["label"]), index=args.index, page=args.page, area=args.area))
 
     def do_video(self, arg: str) -> None:
         if not arg.strip():
@@ -1805,7 +2069,11 @@ class BilibiliTUI:
     def _cache_key(self, item: VideoItem | None) -> str | None:
         if item is None:
             return None
-        return item.bvid or str(item.aid)
+        if item.bvid:
+            return item.bvid
+        if item.aid is not None:
+            return str(item.aid)
+        return item.url or None
 
     def current_detail_item(self) -> VideoItem | None:
         item = self.selected_item
@@ -1957,6 +2225,14 @@ class BilibiliTUI:
                 self.items = self.client.popular(page=self.page, page_size=self.limit)
             elif source == "precious":
                 self.items = self.client.precious(page=self.page, page_size=self.limit)
+            elif source == "bangumi":
+                self.items = self.client.bangumi(
+                    category=str(channel.get("category") or "番剧"),
+                    index=bool(channel.get("index")),
+                    area=channel.get("area"),
+                    page=self.page,
+                    page_size=self.limit,
+                )
             else:
                 self.items = self.client.region_ranking(channel["rid"], page=self.page, page_size=self.limit)
         self.clamp_selection()
@@ -2048,7 +2324,10 @@ class BilibiliTUI:
         if key is None:
             self.status = "当前视频缺少可查询标识"
             return
-        self.detail_cache[key] = self.client.video(key)
+        if item.bvid or item.aid is not None:
+            self.detail_cache[key] = self.client.video(key)
+        else:
+            self.detail_cache[key] = item
         self.history_store.add_video(self.detail_cache[key])
         self.detail_scroll = 0
         self.detail_mode = enter_detail_mode
@@ -2754,6 +3033,11 @@ def build_parser() -> argparse.ArgumentParser:
     recommend_parser.add_argument("-p", "--page", type=int, default=1, help="页码")
     recommend_parser.add_argument("-n", "--limit", type=int, default=10, help="数量")
 
+    add_rank_arguments(subparsers.add_parser("rank", help="查看分区排行榜"))
+    add_rank_arguments(subparsers.add_parser("ranking", help="rank 的别名"))
+
+    add_bangumi_arguments(subparsers.add_parser("bangumi", help="查看番剧 / 国创 / 影视更新或索引"))
+
     precious_parser = subparsers.add_parser("precious", help="查看入站必刷")
     precious_parser.add_argument("-p", "--page", type=int, default=1, help="页码")
     precious_parser.add_argument("-n", "--limit", type=int, default=10, help="数量")
@@ -2798,6 +3082,26 @@ def run_once(args: argparse.Namespace, client: BilibiliClient, history_store: Hi
         return 0
     if args.command == "recommend":
         print_video_list(client.recommend(page=args.page, page_size=args.limit), f"首页推荐 第 {args.page} 页")
+        return 0
+    if args.command in {"rank", "ranking"}:
+        rid, label = resolve_region_rid(getattr(args, "region", None), getattr(args, "rid", None))
+        print_video_list(
+            client.region_ranking(rid=rid, day=args.day, page=args.page, page_size=args.limit),
+            f"{label} 排行榜 | 第 {args.page} 页",
+        )
+        return 0
+    if args.command == "bangumi":
+        meta = resolve_bangumi_category(args.category)
+        print_video_list(
+            client.bangumi(
+                category=str(meta["label"]),
+                index=args.index,
+                area=args.area,
+                page=args.page,
+                page_size=args.limit,
+            ),
+            build_bangumi_title(str(meta["label"]), index=args.index, page=args.page, area=args.area),
+        )
         return 0
     if args.command == "precious":
         print_video_list(client.precious(page=args.page, page_size=args.limit), f"入站必刷 第 {args.page} 页")

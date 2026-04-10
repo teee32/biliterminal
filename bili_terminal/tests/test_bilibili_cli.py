@@ -361,6 +361,30 @@ class ClientTests(unittest.TestCase):
         self.assertEqual([item.title for item in items], ["排行榜 2"])
 
     @mock.patch.object(cli.BilibiliClient, "_open")
+    def test_bangumi_latest_reads_result_payload(self, mock_open: mock.MagicMock) -> None:
+        mock_open.return_value = self.make_response(
+            {
+                "code": 0,
+                "result": {
+                    "latest": [
+                        {
+                            "title": "番剧更新",
+                            "episode_id": 1,
+                            "pub_index": "第1话",
+                            "pub_ts": 1710000000,
+                        }
+                    ],
+                    "timeline": [],
+                },
+            }
+        )
+        items = cli.BilibiliClient().bangumi(page_size=1)
+        request = mock_open.call_args.args[0]
+        self.assertIn("/pgc/web/timeline/v2", request.full_url)
+        self.assertEqual(items[0].title, "番剧更新")
+        self.assertEqual(items[0].url, "https://www.bilibili.com/bangumi/play/ep1")
+
+    @mock.patch.object(cli.BilibiliClient, "_open")
     def test_comments_extracts_reply_items(self, mock_open: mock.MagicMock) -> None:
         mock_open.return_value = self.make_response(
             {
@@ -1095,6 +1119,17 @@ class TUIStateTests(unittest.TestCase):
             tui.load_items()
             client.recommend.assert_called_once_with(page=1, page_size=tui.limit)
             self.assertEqual(tui.items[0].title, "推荐")
+
+    def test_load_items_uses_bangumi_channel(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = cli.HistoryStore(path=f"{temp_dir}/history.json")
+            client = cli.BilibiliClient()
+            client.bangumi = mock.MagicMock(return_value=[self.make_item("番剧更新", bvid=None)])
+            tui = cli.BilibiliTUI(client, store)
+            tui.channel_index = len(tui.channels) - 1
+            tui.load_items()
+            client.bangumi.assert_called_once_with(category="番剧", index=False, area=None, page=1, page_size=tui.limit)
+            self.assertEqual(tui.items[0].title, "番剧更新")
 
     def test_set_channel_switches_to_target_channel(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
