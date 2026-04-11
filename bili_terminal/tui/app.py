@@ -9,148 +9,196 @@ try:
     from textual.app import App
     from textual.binding import Binding
     from textual.events import Key
-except ModuleNotFoundError as exc:  # pragma: no cover - exercised indirectly in smoke tests
+except ModuleNotFoundError as exc:  # pragma: no cover - exercised by smoke tests when deps are absent
     TEXTUAL_IMPORT_ERROR = exc
     App = object  # type: ignore[assignment]
     Binding = None  # type: ignore[assignment]
     Key = Any  # type: ignore[assignment,misc]
 else:
+    from ..bilibili_cli import BilibiliClient, HistoryStore
     from .screens import HomeScreen
 
-
 LEGACY_KEYMAP_SUMMARY = [
-    ("Tab", "next-channel"),
-    ("Shift+Tab", "previous-channel"),
-    ("1-0", "direct-channel"),
-    ("/", "search"),
-    ("Enter", "detail"),
-    ("b", "back-home"),
-    ("v", "history"),
-    ("m", "favorites"),
-    ("a", "audio-toggle"),
-    ("x", "audio-stop"),
-    ("f", "favorite-toggle"),
-    ("c", "comments-refresh"),
-    ("r", "refresh"),
-    ("l", "rerun-search"),
-    ("d", "default-search"),
-    ("q", "quit"),
+    ("up/down", "↑/↓ / j/k"),
+    ("detail", "Enter"),
+    ("back", "Esc / b"),
+    ("search", "/ / s"),
+    ("channels", "Tab / Shift+Tab / 1-9 / 0"),
+    ("history", "v"),
+    ("favorites", "m / f"),
+    ("audio", "a / x"),
+    ("paging", "n / p / PgUp / PgDn"),
+    ("browser", "o"),
+    ("comments", "c"),
+    ("refresh", "r"),
+    ("help", "?"),
+    ("quit", "q"),
 ]
 
 
 if TEXTUAL_IMPORT_ERROR is None:
 
-    class BiliTerminalTextualApp(App[None]):
-        """Stage-1 Textual skeleton that preserves the legacy keymap intent."""
+    class BiliTerminalApp(App[None]):
+        """Textual stage-1 app shell for BiliTerminal."""
 
-        CSS_PATH = "styles.tcss"
+        CSS_PATH = "styles/bili_dark.tcss"
         TITLE = "BiliTerminal"
-        SUB_TITLE = "Textual phase-1 architecture shell"
+        SUB_TITLE = "Textual v0.3.0 stage-1 preview"
         BINDINGS = [
-            Binding("tab", "next_channel", "Next channel"),
-            Binding("shift+tab", "previous_channel", "Previous channel"),
-            Binding("slash", "search", "Search"),
-            Binding("s", "search", "Search"),
-            Binding("enter", "show_detail", "Detail"),
-            Binding("b", "back_home", "Back"),
-            Binding("h", "back_home", "Home"),
-            Binding("v", "show_history", "History"),
-            Binding("m", "show_favorites", "Favorites"),
-            Binding("a", "toggle_audio", "Audio"),
-            Binding("x", "stop_audio", "Stop audio"),
-            Binding("f", "toggle_favorite", "Favorite"),
-            Binding("c", "show_comments", "Comments"),
-            Binding("r", "refresh_placeholder", "Refresh"),
-            Binding("l", "rerun_last_search", "Rerun search"),
-            Binding("d", "default_search", "Default search"),
-            Binding("q", "quit", "Quit"),
+            Binding("up", "move_up", show=False),
+            Binding("down", "move_down", show=False),
+            Binding("j", "move_up", show=False),
+            Binding("k", "move_down", show=False),
+            Binding("enter", "show_detail", show=False),
+            Binding("escape", "go_back", show=False),
+            Binding("b", "go_back", show=False),
+            Binding("slash", "focus_search", show=False),
+            Binding("s", "focus_search", show=False),
+            Binding("tab", "next_channel", show=False),
+            Binding("shift+tab", "prev_channel", show=False),
+            Binding("l", "rerun_last_search", show=False),
+            Binding("d", "default_search", show=False),
+            Binding("h", "go_home", show=False),
+            Binding("v", "show_history", show=False),
+            Binding("m", "show_favorites", show=False),
+            Binding("f", "toggle_favorite", show=False),
+            Binding("a", "toggle_audio", show=False),
+            Binding("x", "stop_audio", show=False),
+            Binding("n", "next_page", show=False),
+            Binding("p", "prev_page", show=False),
+            Binding("pageup", "detail_page_up", show=False),
+            Binding("pagedown", "detail_page_down", show=False),
+            Binding("o", "open_in_browser", show=False),
+            Binding("c", "refresh_comments", show=False),
+            Binding("r", "refresh_view", show=False),
+            Binding("question_mark", "toggle_help", show=False),
+            Binding("q", "quit", show=False),
         ]
 
-        def on_mount(self) -> None:
-            self.push_screen(HomeScreen())
+        def __init__(
+            self,
+            *,
+            client: BilibiliClient | None = None,
+            history_store: HistoryStore | None = None,
+        ) -> None:
+            super().__init__()
+            self.client = client or BilibiliClient()
+            self.history_store = history_store or HistoryStore()
 
-        def _home_screen(self) -> HomeScreen:
+        def on_mount(self) -> None:
+            self.push_screen(HomeScreen(client=self.client, history_store=self.history_store))
+
+        def on_key(self, event: Key) -> None:
+            if event.key in {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9"}:
+                self.action_select_channel_shortcut(event.key)
+                event.stop()
+
+        def _home(self) -> HomeScreen:
             screen = self.screen
             if not isinstance(screen, HomeScreen):  # pragma: no cover - defensive only
                 raise RuntimeError("HomeScreen is not active")
             return screen
 
-        def action_next_channel(self) -> None:
-            self._home_screen().cycle_channel(1)
+        def action_move_up(self) -> None:
+            self._home().move_selection(-1)
 
-        def action_previous_channel(self) -> None:
-            self._home_screen().cycle_channel(-1)
-
-        def action_search(self) -> None:
-            self._home_screen().show_search_placeholder()
+        def action_move_down(self) -> None:
+            self._home().move_selection(1)
 
         def action_show_detail(self) -> None:
-            self._home_screen().show_detail_placeholder()
+            self._home().show_detail()
 
-        def action_back_home(self) -> None:
-            self._home_screen().back_to_home()
+        def action_go_back(self) -> None:
+            self._home().go_back()
 
-        def action_show_history(self) -> None:
-            self._home_screen().show_history_placeholder()
+        def action_focus_search(self) -> None:
+            self._home().focus_search()
 
-        def action_show_favorites(self) -> None:
-            self._home_screen().show_favorites_placeholder()
+        def action_next_channel(self) -> None:
+            self._home().next_channel()
 
-        def action_toggle_audio(self) -> None:
-            self._home_screen().toggle_audio_placeholder()
+        def action_prev_channel(self) -> None:
+            self._home().prev_channel()
 
-        def action_stop_audio(self) -> None:
-            self._home_screen().stop_audio_placeholder()
-
-        def action_toggle_favorite(self) -> None:
-            self._home_screen().toggle_favorite_placeholder()
-
-        def action_show_comments(self) -> None:
-            self._home_screen().show_comments_placeholder()
-
-        def action_refresh_placeholder(self) -> None:
-            self._home_screen().refresh_placeholder()
+        def action_select_channel_shortcut(self, digit: str) -> None:
+            self._home().select_channel_shortcut(digit)
 
         def action_rerun_last_search(self) -> None:
-            self._home_screen().rerun_last_search_placeholder()
+            self._home().rerun_last_search()
 
         def action_default_search(self) -> None:
-            self._home_screen().show_search_placeholder()
+            self._home().default_search()
 
-        def on_key(self, event: Key) -> None:
-            if event.key in {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9"}:
-                self._home_screen().direct_channel(event.key)
-                event.stop()
+        def action_go_home(self) -> None:
+            self._home().go_home()
+
+        def action_show_history(self) -> None:
+            self._home().show_history()
+
+        def action_show_favorites(self) -> None:
+            self._home().show_favorites()
+
+        def action_toggle_favorite(self) -> None:
+            self._home().toggle_favorite()
+
+        def action_toggle_audio(self) -> None:
+            self._home().toggle_audio()
+
+        def action_stop_audio(self) -> None:
+            self._home().stop_audio()
+
+        def action_next_page(self) -> None:
+            self._home().next_page()
+
+        def action_prev_page(self) -> None:
+            self._home().prev_page()
+
+        def action_detail_page_up(self) -> None:
+            self._home().detail_page_up()
+
+        def action_detail_page_down(self) -> None:
+            self._home().detail_page_down()
+
+        def action_open_in_browser(self) -> None:
+            self._home().open_in_browser()
+
+        def action_refresh_comments(self) -> None:
+            self._home().refresh_comments()
+
+        def action_refresh_view(self) -> None:
+            self._home().refresh_view()
+
+        def action_toggle_help(self) -> None:
+            self._home().toggle_help()
 
 else:
 
-    class BiliTerminalTextualApp:
-        """Fallback object that keeps imports friendly when Textual is not installed."""
-
-        CSS_PATH = "styles.tcss"
+    class BiliTerminalApp:
+        CSS_PATH = "styles/bili_dark.tcss"
         TITLE = "BiliTerminal"
-        SUB_TITLE = "Textual phase-1 architecture shell"
-        BINDINGS: tuple[tuple[str, str], ...] = tuple(LEGACY_KEYMAP_SUMMARY)
+        SUB_TITLE = "Textual v0.3.0 stage-1 preview"
+        BINDINGS = tuple(LEGACY_KEYMAP_SUMMARY)
 
         def run(self) -> None:
             raise RuntimeError(
-                "Textual is not installed. Run `python3 -m pip install -e .[textual]` before starting the new UI shell."
+                "Textual 依赖尚未安装，请执行 `python3 -m pip install -e .` 后再启动新的 UI 骨架。"
             )
 
 
-def create_app() -> BiliTerminalTextualApp:
-    return BiliTerminalTextualApp()
+def create_app() -> BiliTerminalApp:
+    return BiliTerminalApp()
 
 
-def main() -> int:
+def run_textual_app() -> int:
     if TEXTUAL_IMPORT_ERROR is not None:
-        print(
-            "Textual dependency missing. Install it with `python3 -m pip install -e .[textual]` to run the phase-1 UI shell.",
-            file=sys.stderr,
-        )
+        print("Textual 依赖缺失，请先执行 `python3 -m pip install -e .`。", file=sys.stderr)
         return 1
     create_app().run()
     return 0
+
+
+def main() -> int:
+    return run_textual_app()
 
 
 if __name__ == "__main__":

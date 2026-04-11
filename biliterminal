@@ -4,8 +4,24 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT_DIR"
 
-if [ "$#" -eq 0 ]; then
-  exec python3 -m bili_terminal tui
+PYTHON_BIN="python3"
+if [ -x "$ROOT_DIR/.venv/bin/python" ]; then
+  PYTHON_BIN="$ROOT_DIR/.venv/bin/python"
 fi
 
-exec python3 -m bili_terminal "$@"
+if [ "$#" -eq 0 ]; then
+  exec "$PYTHON_BIN" -m bili_terminal tui
+fi
+
+case "$1" in
+  textual|new-tui)
+    shift
+    exec "$PYTHON_BIN" -m bili_terminal.tui.app "$@"
+    ;;
+  legacy-tui)
+    shift
+    exec "$PYTHON_BIN" -m bili_terminal tui "$@"
+    ;;
+esac
+
+exec "$PYTHON_BIN" -m bili_terminal "$@"

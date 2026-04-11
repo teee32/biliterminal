@@ -1,0 +1,103 @@
+Screen {
+    background: #0b1020;
+    color: #f7f9fc;
+}
+
+Header,
+Footer {
+    background: #141a2e;
+    color: #f7f9fc;
+}
+
+#home-layout {
+    height: 1fr;
+    padding: 1 1 0 1;
+}
+
+.panel {
+    border: round #334155;
+    background: #111827;
+    padding: 1;
+}
+
+#sidebar-pane {
+    width: 28;
+    margin-right: 1;
+}
+
+#main-pane {
+    width: 2fr;
+    margin-right: 1;
+}
+
+#detail-pane {
+    width: 1fr;
+}
+
+.panel-title {
+    color: #fb7299;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#hero-title {
+    color: #8bd6ff;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#hero-subtitle,
+#mode-banner,
+#status-line,
+#help-overlay,
+CommentView,
+AudioBar {
+    margin-top: 1;
+}
+
+#mode-banner {
+    color: #c5d0e6;
+}
+
+#status-line {
+    padding: 1;
+    margin: 0 1 0 1;
+    border: round #2b9ed1;
+    background: #101827;
+    color: #8bd6ff;
+}
+
+AudioBar {
+    padding: 1;
+    margin: 0 1;
+    border: round #fb7299;
+    background: #171a27;
+    color: #f7f9fc;
+}
+
+#help-overlay {
+    padding: 1;
+    margin: 0 1 1 1;
+    border: round #64748b;
+    background: #0f172a;
+    color: #dbe4f3;
+}
+
+.hidden {
+    display: none;
+}
+
+#channel-list,
+VideoList {
+    height: 1fr;
+}
+
+.video-list__item,
+.channel-item {
+    padding: 0 1;
+}
+
+ListView > ListItem.--highlight {
+    background: #1d3358;
+    color: #ffffff;
+}

@@ -23,6 +23,12 @@ git clone https://github.com/teee32/biliterminal.git && cd biliterminal && ./bil
 ./biliterminal
 ```
 
+直接一键启动 Textual 预览版：
+
+```bash
+./biliterminal textual
+```
+
 如果想直接启动某个命令：
 
 ```bash
@@ -45,6 +51,7 @@ git clone https://github.com/teee32/biliterminal.git && cd biliterminal && ./bil
 ```bash
 python3 -m bili_terminal tui
 ./bili_terminal/start.sh
+./bili_terminal/start.sh textual
 ```
 
 自己构建 macOS 双击版：
@@ -186,14 +193,20 @@ bili> search 原神 1 5
 - `?`：显示帮助浮层
 - `q`：退出
 
-## Textual 重构阶段 1（规划）
+## Textual 重构阶段 1
 
-当前仓库已经整理出 Textual 重构的阶段 1 架构说明，目标是在**不破坏现有 CLI / curses TUI** 的前提下，先落下 `bili_terminal/tui/app.py` 骨架、首页占位布局、基础 smoke tests 和后续 `core/` 拆分边界。
+当前仓库已经落下 Textual 阶段 1 骨架，在**不破坏现有 CLI / curses TUI** 的前提下提供：
+
+- `bili_terminal/tui/app.py` 主入口
+- `HomeScreen` 首页骨架（Sidebar / VideoList / Detail / CommentView / AudioBar）
+- `screens/`、`widgets/`、`styles/` 目录结构
+- `test_textual_app.py` smoke tests
 
 - 详细方案：[`docs/textual-phase1-architecture.md`](docs/textual-phase1-architecture.md)
 - 兼容约束：现有 `python3 -m bili_terminal tui`、`./bili_terminal/start.sh` 继续保留
 - 迁移约束：后续新增 Textual 入口时，需同时保留 `--legacy-tui` 作为旧版 curses fallback
-- 打包提示：macOS app 构建脚本后续需要一并复制 `bili_terminal/tui/` 与 `app.tcss` 资源
+- 预览启动：`python3 -m bili_terminal.tui.app`
+- 打包提示：macOS app 构建脚本后续需要一并复制 `bili_terminal/tui/` 与 `styles/bili_dark.tcss` 资源
 
 ## 测试
 

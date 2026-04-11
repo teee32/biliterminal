@@ -5,16 +5,16 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "biliterminal"
 version = "0.3.0"
-description = "Terminal-first Bilibili browser with staged Textual migration scaffolding"
+description = "Terminal-first Bilibili browser with a staged Textual migration"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = []
-
-[project.optional-dependencies]
-textual = ["textual>=0.30,<0.31"]
+dependencies = [
+    "textual>=0.90.0",
+    "textual-image>=0.3.0",
+]
 
 [tool.setuptools.packages.find]
 include = ["bili_terminal*"]
 
 [tool.setuptools.package-data]
-"bili_terminal.tui" = ["*.tcss"]
+"bili_terminal.tui" = ["styles/*.tcss"]

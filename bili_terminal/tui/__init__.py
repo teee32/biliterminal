@@ -1,5 +1,5 @@
-"""Stage-1 Textual app scaffolding for BiliTerminal."""
+"""Textual UI package for the staged BiliTerminal migration."""
 
-from .app import BiliTerminalTextualApp, create_app, main
+from .app import BiliTerminalApp, create_app, run_textual_app
 
-__all__ = ["BiliTerminalTextualApp", "create_app", "main"]
+__all__ = ["BiliTerminalApp", "create_app", "run_textual_app"]
