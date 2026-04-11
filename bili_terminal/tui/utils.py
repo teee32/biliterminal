@@ -4,26 +4,22 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from ..bilibili_cli import (
-    HOME_CHANNELS,
-    AudioPlaybackState,
     BilibiliAPIError,
-    BilibiliClient,
+    COMMENT_WEB_LOCATION,
+    HOME_CHANNELS,
     CommentItem,
-    HistoryStore,
     VideoItem,
-    audio_action_for_item,
     build_detail_lines,
     format_timestamp,
     human_count,
-    item_ref_label,
-    load_audio_playback_state,
-    normalize_keyword,
-    stop_audio_playback,
+    is_bangumi_item,
+    video_lookup_ref_from_item,
 )
 
 DEFAULT_SEARCH_PLACEHOLDER = "按 / 或 s 搜索，支持中文实时输入"
 DEFAULT_STATUS_TEXT = "Textual 阶段 1 骨架已启动；当前保留原键位语义与页面结构。"
 DEFAULT_AUDIO_STATUS = "音频控制栏已就位；阶段 2 将复用现有 audio 播放链路。"
+DEFAULT_COMMENT_PLACEHOLDER = "评论区已预留；按 c 可加载热评，异常时会在此处直接提示。"
 
 HELP_LINES = [
     "↑/↓ / j/k 移动",
@@ -387,3 +383,80 @@ def placeholder_comments(video: VideoSummary | None) -> list[CommentSummary]:
 
 def help_text() -> str:
     return "\n".join(HELP_LINES)
+
+
+def video_cover_url(item: VideoItem | None) -> str | None:
+    if item is None:
+        return None
+    raw = item.raw or {}
+    for field in ("pic", "cover", "cover_url", "coverUrl", "vertical_cover"):
+        value = raw.get(field)
+        if isinstance(value, str) and value.strip():
+            if value.startswith("//"):
+                return f"https:{value}"
+            return value
+    return None
+
+
+def video_summary_from_item(item: VideoItem) -> VideoSummary:
+    return VideoSummary(
+        title=item.title,
+        author=item.author,
+        description=item.description or "暂无简介",
+        duration=item.duration,
+        play_label=f"{human_count(item.play)} 播放",
+        url=item.url,
+        cover_url=video_cover_url(item),
+    )
+
+
+def comment_summary_from_item(item: CommentItem) -> CommentSummary:
+    return CommentSummary(
+        author=item.author,
+        message=item.message or "暂无评论内容",
+        meta=f"👍 {human_count(item.like)} · {format_timestamp(item.ctime)}",
+    )
+
+
+def detail_preview_text(item: VideoItem | None, *, width: int = 42) -> str:
+    if item is None:
+        return "详情区：当前没有可显示的视频。"
+    return "\n".join(build_detail_lines(item, width))
+
+
+def resolve_video_for_detail(client: object, item: VideoItem | None) -> VideoItem | None:
+    if item is None or not hasattr(client, "video"):
+        return item
+    lookup_ref = video_lookup_ref_from_item(item)
+    if not lookup_ref:
+        return item
+    try:
+        resolved = client.video(lookup_ref)
+    except (BilibiliAPIError, ValueError):
+        return item
+    return resolved if isinstance(resolved, VideoItem) else item
+
+
+def load_comment_summaries(client: object, item: VideoItem | None, *, limit: int = 4) -> tuple[VideoItem | None, list[CommentSummary], str | None]:
+    if item is None:
+        return None, [], "当前没有可加载评论的视频。"
+    resolved = resolve_video_for_detail(client, item)
+    if resolved is None:
+        return item, [], "当前没有可加载评论的视频。"
+    if resolved.aid is None:
+        if is_bangumi_item(resolved):
+            return resolved, [], "当前番剧条目暂不支持评论预览，请按 o 在浏览器查看。"
+        return resolved, [], "当前条目缺少 AID，无法加载评论。"
+    if not hasattr(client, "comments"):
+        return resolved, [], "当前客户端不可用，无法加载评论。"
+    try:
+        comments = client.comments(resolved.aid, page_size=limit, bvid=resolved.bvid)
+    except BilibiliAPIError as exc:
+        return resolved, [], f"评论加载失败: {exc}"
+    return resolved, [comment_summary_from_item(comment) for comment in comments], None
+
+
+def bangumi_badge(item: VideoItem | None) -> str:
+    if item is None:
+        return "-"
+    return "番剧 / PGC" if is_bangumi_item(item) or (item.raw or {}).get("season_type") == COMMENT_WEB_LOCATION else "视频"
