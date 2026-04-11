@@ -283,7 +283,7 @@ class TextualAdapter:
         if video.item is not None:
             return video.item
         if video.bvid or video.aid is not None:
-            ref = video.bvid or str(video.aid)
+            ref = video.bvid or f"av{video.aid}"
             return self.client.video(ref)
         return None
 
