@@ -467,6 +467,34 @@ def item_ref_label(item: VideoItem) -> str:
     return "-"
 
 
+def channel_shortcut_index_from_key(key: int, total_channels: int) -> int | None:
+    if ord("1") <= key <= ord("9"):
+        index = key - ord("1")
+        return index if index < total_channels else None
+    if key == ord("0") and total_channels >= 10:
+        return 9
+    return None
+
+
+def video_lookup_ref_from_item(item: VideoItem | None) -> str | None:
+    if item is None:
+        return None
+    if item.bvid:
+        return item.bvid
+    if item.aid is not None:
+        return str(item.aid)
+    return None
+
+
+def is_bangumi_item(item: VideoItem | None) -> bool:
+    if item is None:
+        return False
+    if "/bangumi/" in (item.url or ""):
+        return True
+    raw = item.raw or {}
+    return any(raw.get(field) not in (None, "") for field in ("episode_id", "ep_id", "season_id", "media_id"))
+
+
 def resolve_region_rid(region: str | None = None, rid: int | None = None) -> tuple[int, str]:
     if rid is not None:
         label = next((str(channel["label"]) for channel in HOME_CHANNELS if channel.get("rid") == rid), f"分区 {rid}")
@@ -2157,6 +2185,16 @@ class BilibiliTUI:
             return False
         return key in self.comment_loaded
 
+    def current_comment_unavailable_message(self) -> str | None:
+        item = self.current_detail_item() if self.detail_mode else self.selected_item
+        if item is None:
+            return None
+        if item.aid is not None or video_lookup_ref_from_item(item):
+            return None
+        if is_bangumi_item(item):
+            return "当前番剧条目暂不支持评论预览，请按 o 在浏览器查看"
+        return "当前条目暂不支持评论预览，请按 o 在浏览器查看"
+
     def current_list_state(self) -> ListState:
         return ListState(
             mode=self.mode,
@@ -2245,9 +2283,12 @@ class BilibiliTUI:
                 aid = detail_item.aid
                 referer_bvid = detail_item.bvid or referer_bvid
             else:
+                lookup_ref = video_lookup_ref_from_item(detail_item or item)
+                if not lookup_ref:
+                    return
                 try:
-                    detail_item = self.client.video(key)
-                except BilibiliAPIError:
+                    detail_item = self.client.video(lookup_ref)
+                except (BilibiliAPIError, ValueError):
                     return
                 self.detail_cache[key] = detail_item
                 aid = detail_item.aid
@@ -2338,6 +2379,10 @@ class BilibiliTUI:
         if comment_error:
             self.status = f"评论加载失败: {comment_error}"
             return
+        unavailable_message = self.current_comment_unavailable_message()
+        if unavailable_message and not self.current_comments_loaded() and not self.current_comments():
+            self.status = unavailable_message
+            return
         comment_count = len(self.current_comments())
         self.status = f"已加载评论 {comment_count} 条"
 
@@ -2381,8 +2426,9 @@ class BilibiliTUI:
         if key is None:
             self.status = "当前视频缺少可查询标识"
             return
-        if item.bvid or item.aid is not None:
-            self.detail_cache[key] = self.client.video(key)
+        lookup_ref = video_lookup_ref_from_item(item)
+        if lookup_ref:
+            self.detail_cache[key] = self.client.video(lookup_ref)
         else:
             self.detail_cache[key] = item
         self.history_store.add_video(self.detail_cache[key])
@@ -2433,7 +2479,7 @@ class BilibiliTUI:
             "Esc / b        返回",
             "/ 或 s         搜索，支持中文输入",
             "Tab / Shift+Tab 切换首页分区",
-            "1-9            直接切换对应分区",
+            "1-9 / 0        直接切换对应分区（0 为第 10 个）",
             "l              重跑最近一次搜索",
             "h              切回热门",
             "v              查看历史",
@@ -2644,8 +2690,13 @@ class BilibiliTUI:
                 stdscr.addnstr(y + 1, x + 2, "当前视频暂无可显示热评", width - 4, self.attr_muted())
                 stdscr.addnstr(y + 2, x + 2, "按 r 刷新页面，按 o 浏览器查看", width - 4, self.attr_muted())
             else:
-                stdscr.addnstr(y + 1, x + 2, "按 c 加载当前视频评论", width - 4, self.attr_muted())
-                stdscr.addnstr(y + 2, x + 2, "r 刷新当前视图", width - 4, self.attr_muted())
+                unavailable_message = self.current_comment_unavailable_message()
+                if unavailable_message:
+                    stdscr.addnstr(y + 1, x + 2, truncate_display(unavailable_message, width - 4), width - 4, self.attr_muted())
+                    stdscr.addnstr(y + 2, x + 2, "按 o 浏览器查看，按 r 刷新页面", width - 4, self.attr_muted())
+                else:
+                    stdscr.addnstr(y + 1, x + 2, "按 c 加载当前视频评论", width - 4, self.attr_muted())
+                    stdscr.addnstr(y + 2, x + 2, "r 刷新当前视图", width - 4, self.attr_muted())
             return
 
         cursor = y + 1
@@ -2826,7 +2877,7 @@ class BilibiliTUI:
         elif self.mode == "favorites":
             search_hint = "按 a 播放/暂停音频，x 停止，o 打开"
         else:
-            search_hint = "Tab 切换分区，1-9 直选，/ 搜索"
+            search_hint = "Tab 切换分区，1-9/0 直选，/ 搜索"
         hint_x = max(0, width - display_width(search_hint) - 1)
         stdscr.addnstr(1, hint_x, search_hint, width - hint_x - 1, self.attr_muted())
 
@@ -2925,7 +2976,7 @@ class BilibiliTUI:
         if self.mode == "favorites":
             shortcuts = "j/k 移动  Enter 详情  a 播放/暂停  x 停止  f 取消收藏  o 浏览器打开  c 评论  b 返回  q 退出"
         else:
-            shortcuts = "Tab 分区  1-9 直选  / 搜索  a 播放/暂停  x 停止  f 收藏  m 收藏夹  c 评论  Enter 详情  q 退出"
+            shortcuts = "Tab 分区  1-9/0 直选  / 搜索  a 播放/暂停  x 停止  f 收藏  m 收藏夹  c 评论  Enter 详情  q 退出"
         stdscr.addnstr(height - 2, 2, shortcuts, width - 4, self.attr_muted())
         stdscr.addnstr(height - 1, 0, f"状态: {self.status}", width - 1, self.attr_accent())
         if self.show_help:
@@ -2995,66 +3046,68 @@ class BilibiliTUI:
                     self.cycle_channel(1)
                 elif key == curses.KEY_BTAB:
                     self.cycle_channel(-1)
-                elif ord("1") <= key <= ord("9"):
-                    self.set_channel(key - ord("1"))
-                elif key in (ord("g"),):
-                    self.selected_index = 0
-                elif key in (ord("G"),):
-                    self.selected_index = max(0, len(self.items) - 1)
-                elif key in (10, 13, curses.KEY_RIGHT):
-                    self.load_selected_detail(enter_detail_mode=True)
-                elif key == ord("o"):
-                    self.open_selected()
-                elif key == ord("a"):
-                    self.play_selected_audio()
-                elif key == ord("x"):
-                    self.stop_audio()
-                elif key == ord("r"):
-                    self.refresh_current_view()
-                elif key == ord("c"):
-                    self.refresh_comments()
-                elif key == ord("h"):
-                    self.switch_mode("hot")
-                elif key == ord("v"):
-                    self.switch_mode("history")
-                elif key == ord("m"):
-                    self.switch_mode("favorites")
-                elif key == ord("f"):
-                    self.toggle_selected_favorite()
-                elif key == ord("l"):
-                    self.rerun_last_search()
-                elif key == ord("d"):
-                    keyword = self.default_search_keyword or self.client.search_default()
-                    if keyword:
-                        self.history_store.add_keyword(keyword)
-                        self.switch_mode("search", keyword=keyword)
-                    else:
-                        self.status = "当前没有默认搜索词"
-                elif key in (ord("/"), ord("s")):
-                    keyword = self.prompt_input(stdscr, "搜索关键词: ", self.keyword if self.mode == "search" else "")
-                    if keyword:
-                        self.history_store.add_keyword(keyword)
-                        self.switch_mode("search", keyword=keyword)
-                    else:
-                        self.status = "已取消搜索"
-                elif key in (ord("n"), curses.KEY_NPAGE):
-                    if self.mode in {"history", "favorites"}:
-                        self.status = "当前列表没有分页"
-                    else:
-                        self.push_list_state()
-                        self.page += 1
+                else:
+                    shortcut_index = channel_shortcut_index_from_key(key, len(self.channels))
+                    if shortcut_index is not None:
+                        self.set_channel(shortcut_index)
+                    elif key in (ord("g"),):
                         self.selected_index = 0
-                        self.load_items()
-                elif key in (ord("p"), curses.KEY_PPAGE):
-                    if self.mode in {"history", "favorites"}:
-                        self.status = "当前列表没有分页"
-                    elif self.page > 1:
-                        self.push_list_state()
-                        self.page -= 1
-                        self.selected_index = 0
-                        self.load_items()
-                    else:
-                        self.status = "已经是第一页"
+                    elif key in (ord("G"),):
+                        self.selected_index = max(0, len(self.items) - 1)
+                    elif key in (10, 13, curses.KEY_RIGHT):
+                        self.load_selected_detail(enter_detail_mode=True)
+                    elif key == ord("o"):
+                        self.open_selected()
+                    elif key == ord("a"):
+                        self.play_selected_audio()
+                    elif key == ord("x"):
+                        self.stop_audio()
+                    elif key == ord("r"):
+                        self.refresh_current_view()
+                    elif key == ord("c"):
+                        self.refresh_comments()
+                    elif key == ord("h"):
+                        self.switch_mode("hot")
+                    elif key == ord("v"):
+                        self.switch_mode("history")
+                    elif key == ord("m"):
+                        self.switch_mode("favorites")
+                    elif key == ord("f"):
+                        self.toggle_selected_favorite()
+                    elif key == ord("l"):
+                        self.rerun_last_search()
+                    elif key == ord("d"):
+                        keyword = self.default_search_keyword or self.client.search_default()
+                        if keyword:
+                            self.history_store.add_keyword(keyword)
+                            self.switch_mode("search", keyword=keyword)
+                        else:
+                            self.status = "当前没有默认搜索词"
+                    elif key in (ord("/"), ord("s")):
+                        keyword = self.prompt_input(stdscr, "搜索关键词: ", self.keyword if self.mode == "search" else "")
+                        if keyword:
+                            self.history_store.add_keyword(keyword)
+                            self.switch_mode("search", keyword=keyword)
+                        else:
+                            self.status = "已取消搜索"
+                    elif key in (ord("n"), curses.KEY_NPAGE):
+                        if self.mode in {"history", "favorites"}:
+                            self.status = "当前列表没有分页"
+                        else:
+                            self.push_list_state()
+                            self.page += 1
+                            self.selected_index = 0
+                            self.load_items()
+                    elif key in (ord("p"), curses.KEY_PPAGE):
+                        if self.mode in {"history", "favorites"}:
+                            self.status = "当前列表没有分页"
+                        elif self.page > 1:
+                            self.push_list_state()
+                            self.page -= 1
+                            self.selected_index = 0
+                            self.load_items()
+                        else:
+                            self.status = "已经是第一页"
             except (BilibiliAPIError, ValueError) as exc:
                 self.status = f"错误: {exc}"
 

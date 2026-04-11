@@ -28,6 +28,16 @@ class ParseVideoRefTests(unittest.TestCase):
 
 
 class FormattingTests(unittest.TestCase):
+    def test_channel_shortcut_index_maps_numeric_keys(self) -> None:
+        self.assertEqual(cli.channel_shortcut_index_from_key(ord("1"), 10), 0)
+        self.assertEqual(cli.channel_shortcut_index_from_key(ord("9"), 10), 8)
+
+    def test_channel_shortcut_index_maps_zero_to_tenth_channel(self) -> None:
+        self.assertEqual(cli.channel_shortcut_index_from_key(ord("0"), 10), 9)
+
+    def test_channel_shortcut_index_ignores_zero_without_tenth_channel(self) -> None:
+        self.assertIsNone(cli.channel_shortcut_index_from_key(ord("0"), 9))
+
     def test_normalize_keyword_repairs_utf8_latin1_mojibake(self) -> None:
         self.assertEqual(cli.normalize_keyword("ä¸­æ"), "中文")
 
@@ -1159,6 +1169,23 @@ class TUIStateTests(unittest.TestCase):
             raw={},
         )
 
+    def make_bangumi_item(self, title: str = "番剧更新", episode_id: int = 1) -> cli.VideoItem:
+        return cli.VideoItem(
+            title=title,
+            author="第1话",
+            bvid=None,
+            aid=None,
+            duration="第1话",
+            play=1,
+            danmaku=0,
+            like=3,
+            favorite=4,
+            pubdate=1710000000,
+            description="简介",
+            url=f"https://www.bilibili.com/bangumi/play/ep{episode_id}",
+            raw={"episode_id": episode_id},
+        )
+
     def test_load_items_uses_history_mode(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             store = cli.HistoryStore(path=f"{temp_dir}/history.json")
@@ -1235,11 +1262,13 @@ class TUIStateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             store = cli.HistoryStore(path=f"{temp_dir}/history.json")
             client = cli.BilibiliClient()
-            client.bangumi = mock.MagicMock(return_value=[self.make_item("番剧更新", bvid=None)])
+            client.bangumi = mock.MagicMock(return_value=[self.make_bangumi_item()])
+            client.video = mock.MagicMock()
             tui = cli.BilibiliTUI(client, store)
             tui.channel_index = len(tui.channels) - 1
             tui.load_items()
             client.bangumi.assert_called_once_with(category="番剧", index=False, area=None, page=1, page_size=tui.limit)
+            client.video.assert_not_called()
             self.assertEqual(tui.items[0].title, "番剧更新")
 
     def test_set_channel_switches_to_target_channel(self) -> None:
@@ -1314,6 +1343,19 @@ class TUIStateTests(unittest.TestCase):
             tui.refresh_comments()
             tui.ensure_comments_for_selected.assert_called_once_with(force=True)
             self.assertIn("评论加载失败", tui.status)
+
+    def test_refresh_comments_for_bangumi_item_shows_unavailable_hint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = cli.HistoryStore(path=f"{temp_dir}/history.json")
+            client = cli.BilibiliClient()
+            client.video = mock.MagicMock()
+            client.comments = mock.MagicMock()
+            tui = cli.BilibiliTUI(client, store)
+            tui.items = [self.make_bangumi_item(episode_id=3243121)]
+            tui.refresh_comments()
+            client.video.assert_not_called()
+            client.comments.assert_not_called()
+            self.assertIn("番剧条目暂不支持评论预览", tui.status)
 
     def test_toggle_selected_favorite_adds_item(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1544,6 +1586,30 @@ class TUIStateTests(unittest.TestCase):
             tui.draw_comments_panel(fake, 0, 0, 8, 42)
             rendered = " ".join(fake.lines)
             self.assertIn("暂无可显示热评", rendered)
+
+    def test_draw_comments_panel_renders_bangumi_unavailable_hint(self) -> None:
+        class FakeWindow:
+            def __init__(self) -> None:
+                self.lines: list[str] = []
+
+            def derwin(self, *args, **kwargs) -> "FakeWindow":
+                return self
+
+            def box(self) -> None:
+                return None
+
+            def addnstr(self, _y: int, _x: int, text: str, *_args) -> None:
+                self.lines.append(text)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = cli.HistoryStore(path=f"{temp_dir}/history.json")
+            tui = cli.BilibiliTUI(cli.BilibiliClient(), store)
+            tui.items = [self.make_bangumi_item(episode_id=3243121)]
+            fake = FakeWindow()
+            tui.draw_comments_panel(fake, 0, 0, 8, 42)
+            rendered = " ".join(fake.lines)
+            self.assertIn("番剧条目暂不支持评论预览", rendered)
+            self.assertIn("浏览器", rendered)
 
 
 if __name__ == "__main__":
