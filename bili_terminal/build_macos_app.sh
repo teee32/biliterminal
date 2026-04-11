@@ -13,6 +13,13 @@ HELPER_SOURCE="${ROOT_DIR}/bili_terminal/macos/biliterminal_audio_helper.m"
 HELPER_BINARY="${PAYLOAD_DIR}/biliterminal-audio-helper"
 ZIP_PATH="${DIST_DIR}/${APP_NAME}-macOS.zip"
 
+copy_tree() {
+    local source_dir="$1"
+    local target_dir="$2"
+    mkdir -p "${target_dir}"
+    cp -R "${source_dir}/." "${target_dir}/"
+}
+
 rm -rf "${APP_BUNDLE}" "${ZIP_PATH}"
 mkdir -p "${DIST_DIR}"
 
@@ -30,6 +37,7 @@ chmod +x "${RESOURCES_DIR}/launch.command"
 cp "${ROOT_DIR}/bili_terminal/__init__.py" "${PAYLOAD_DIR}/__init__.py"
 cp "${ROOT_DIR}/bili_terminal/__main__.py" "${PAYLOAD_DIR}/__main__.py"
 cp "${ROOT_DIR}/bili_terminal/bilibili_cli.py" "${PAYLOAD_DIR}/bilibili_cli.py"
+copy_tree "${ROOT_DIR}/bili_terminal/tui" "${PAYLOAD_DIR}/tui"
 cp "${HELPER_SOURCE}" "${MACOS_DIR}/biliterminal_audio_helper.m"
 
 if command -v clang >/dev/null 2>&1; then
