@@ -20,13 +20,15 @@ git clone https://github.com/teee32/biliterminal.git && cd biliterminal && ./bil
 已经 clone 下来之后：
 
 ```bash
-./biliterminal
+./biliterminal                # 默认进入 legacy curses TUI
+./biliterminal --legacy-tui   # 显式强制 legacy curses fallback
 ```
 
 直接一键启动 Textual 预览版：
 
 ```bash
 ./biliterminal textual
+./biliterminal new-tui
 ```
 
 如果想直接启动某个命令：
@@ -50,8 +52,11 @@ git clone https://github.com/teee32/biliterminal.git && cd biliterminal && ./bil
 
 ```bash
 python3 -m bili_terminal tui
+python3 -m bili_terminal textual
+python3 -m bili_terminal --legacy-tui
 ./bili_terminal/start.sh
 ./bili_terminal/start.sh textual
+./bili_terminal/start.sh --legacy-tui
 ```
 
 自己构建 macOS 双击版：
@@ -197,6 +202,10 @@ bili> search 原神 1 5
 
 当前仓库已经落下 Textual 阶段 1 骨架，在**不破坏现有 CLI / curses TUI** 的前提下提供：
 
+- 发布策略：默认 shell 启动仍走 legacy curses TUI，`textual` / `new-tui` 显式进入新 UI，`legacy-tui` / `--legacy-tui` 作为强制 fallback 保留
+- 统一入口：`python3 -m bili_terminal ...`、仓库根目录 `./biliterminal`、以及 `bili_terminal/start.sh` 共享同一套 launch 语义
+- 安装后入口：`python3 -m pip install -e .` 会注册 `biliterminal` 命令，保持与仓库脚本一致的参数行为
+
 - `bili_terminal/tui/app.py` 主入口
 - `HomeScreen` 首页骨架（Sidebar / VideoList / Detail / CommentView / AudioBar）
 - `screens/`、`widgets/`、`styles/` 目录结构
@@ -204,8 +213,8 @@ bili> search 原神 1 5
 
 - 详细方案：[`docs/textual-phase1-architecture.md`](docs/textual-phase1-architecture.md)
 - 兼容约束：现有 `python3 -m bili_terminal tui`、`./bili_terminal/start.sh` 继续保留
-- 迁移约束：后续新增 Textual 入口时，需同时保留 `--legacy-tui` 作为旧版 curses fallback
-- 预览启动：`python3 -m bili_terminal.tui.app`
+- 迁移约束：新增 Textual 入口时统一保留 `legacy-tui` / `--legacy-tui` 作为旧版 curses fallback
+- 预览启动：`python3 -m bili_terminal textual`（或 `./biliterminal textual`）
 - 打包提示：macOS app 构建脚本后续需要一并复制 `bili_terminal/tui/` 与 `styles/bili_dark.tcss` 资源
 
 ## 测试

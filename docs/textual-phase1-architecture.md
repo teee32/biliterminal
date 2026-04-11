@@ -2,6 +2,13 @@
 
 > 目标：按 v0.3.0 的迁移方向，为 Textual 版先落下**完整目录结构**、`app.py` 主入口、`HomeScreen` 首页骨架与后续 `core/` 抽离计划，同时保持现有 CLI / curses TUI 完全可用。
 
+## v0.3.0 发布面整合策略
+
+- 默认仓库启动脚本（`./biliterminal`、`./bili_terminal/start.sh`）继续落到 legacy curses TUI，降低发布风险。
+- `textual` / `new-tui` 作为显式新入口，统一由 `python -m bili_terminal ...` 分发到 Textual app。
+- `legacy-tui` / `--legacy-tui` 作为显式 fallback，要求在仓库脚本、模块入口、安装后的 console script 上语义一致。
+- `pyproject.toml` 提供 `biliterminal` console script，保证安装后入口与仓库脚本保持一致。
+
 ## 阶段 1 当前落地范围
 
 已落地：
@@ -60,6 +67,19 @@ bili_terminal/
 - curses TUI
 
 阶段 1 不改这些业务事实，只做 **Textual UI 壳层**，避免一上来就把运行中的能力拆坏。
+
+### 1.5 发布入口与 screen flow
+
+当前阶段的发布面不把 Textual 直接设为默认，而是明确区分两条入口：
+
+1. **稳定入口**：`./biliterminal`、`./bili_terminal/start.sh`、`biliterminal --legacy-tui` → legacy curses TUI
+2. **新 UI 入口**：`./biliterminal textual`、`python -m bili_terminal textual` → Textual Home shell
+
+Textual 侧的 screen flow 约束如下：
+
+- Launch → `HomeScreen`（统一承接全局快捷键与 AudioBar）
+- `HomeScreen` 内承载 Search / Detail / History / Favorites 的模式切换或后续独立 Screen push
+- legacy curses TUI 继续作为任何发布问题下的回退路径，不与 Textual 快捷键语义分叉
 
 ### 2. Textual 壳层职责边界
 
