@@ -186,6 +186,15 @@ bili> search 原神 1 5
 - `?`：显示帮助浮层
 - `q`：退出
 
+## Textual 重构阶段 1（规划）
+
+当前仓库已经整理出 Textual 重构的阶段 1 架构说明，目标是在**不破坏现有 CLI / curses TUI** 的前提下，先落下 `bili_terminal/tui/app.py` 骨架、首页占位布局、基础 smoke tests 和后续 `core/` 拆分边界。
+
+- 详细方案：[`docs/textual-phase1-architecture.md`](docs/textual-phase1-architecture.md)
+- 兼容约束：现有 `python3 -m bili_terminal tui`、`./bili_terminal/start.sh` 继续保留
+- 迁移约束：后续新增 Textual 入口时，需同时保留 `--legacy-tui` 作为旧版 curses fallback
+- 打包提示：macOS app 构建脚本后续需要一并复制 `bili_terminal/tui/` 与 `app.tcss` 资源
+
 ## 测试
 
 ```bash
