@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -17,7 +18,12 @@ from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS_DIR = ROOT / "assets" / "readme"
-APP_BOOT_COMMAND = "python3 -m bili_terminal --tui"
+SCREENSHOT_CONFIG = ROOT / ".tmp-shots" / "readme-config.toml"
+PYTHON_BIN = ROOT / ".venv" / "bin" / "python"
+APP_BOOT_COMMAND = (
+    f"BILITERMINAL_CONFIG={shlex.quote(str(SCREENSHOT_CONFIG))} "
+    f"{shlex.quote(str(PYTHON_BIN if PYTHON_BIN.exists() else 'python3'))} -m bili_terminal --tui"
+)
 
 ANSI_RE = re.compile(r"\x1b\[([0-9;]*)m")
 
@@ -175,6 +181,8 @@ def try_kill_session(session: str) -> None:
 
 def capture_scenario(scenario: Scenario) -> str:
     try_kill_session(scenario.session)
+    SCREENSHOT_CONFIG.parent.mkdir(parents=True, exist_ok=True)
+    SCREENSHOT_CONFIG.write_text('[ui]\ntheme = "dark"\n', encoding="utf-8")
     command = f"cd {ROOT} && {APP_BOOT_COMMAND}"
     run_tmux(
         "new-session",

@@ -1,8 +1,15 @@
 # BiliTerminal
 
-一个轻量、低打扰、适合在终端里摸鱼刷一眼的 Bilibili 客户端。
+一个轻量、低打扰、适合在终端里快速刷一眼的 Bilibili 客户端。
 
-适合上班空隙快速看首页、搜中文视频、翻评论、顺手先收藏，等有空了再去网页端继续看。
+适合上班空隙快速看首页、刷分区排行、搜中文视频、翻评论、顺手先收藏，等有空了再去网页端继续看。
+
+当前仓库同时提供两套界面：
+
+- **Textual v0.3 UI**：新版主界面，支持主题切换、帮助浮层、详情页、评论预览、历史/收藏、音频控制
+- **legacy curses TUI**：旧版 fallback，保留原有入口与兼容行为
+
+macOS `.app` 双击启动默认进入 **Textual v0.3**；仓库里的 shell 脚本默认仍保留 legacy fallback。
 
 ## 快速启动
 
@@ -20,11 +27,11 @@ git clone https://github.com/teee32/biliterminal.git && cd biliterminal && ./bil
 已经 clone 下来之后：
 
 ```bash
-./biliterminal                # 默认进入 legacy curses TUI
+./biliterminal                # 默认进入 legacy curses TUI（兼容保留）
 ./biliterminal --legacy-tui   # 显式强制 legacy curses fallback
 ```
 
-直接一键启动新版 Textual：
+直接进入新版 Textual：
 
 ```bash
 ./biliterminal textual
@@ -79,7 +86,7 @@ open dist/BiliTerminal.app
 
 ## 界面预览
 
-下面这几张都是当前版本的真实运行截图。
+下面这几张都是当前版本 README 重新生成的真实运行截图（Textual v0.3）。
 
 ### 首页流
 
@@ -93,11 +100,15 @@ open dist/BiliTerminal.app
 
 ![BiliTerminal 详情页](assets/readme/tui-detail.png)
 
-这个实现基于对 Bilibili 网页公开接口的逆向观察，当前覆盖 3 个核心能力：
+## 当前能力
+
+这个实现基于对 Bilibili 网页公开接口的观察与终端交互适配，当前覆盖：
 
 - 首页推荐流
 - 热门视频列表
 - 入站必刷列表
+- 分区排行榜：`rank` / `ranking`
+- 番剧 / 国创 / 影视：`bangumi`
 - 关键词搜索
 - 首页热搜词
 - 视频详情查看
@@ -106,7 +117,9 @@ open dist/BiliTerminal.app
 - 本地收藏夹，支持稍后从浏览器继续看
 - 最近搜索与最近浏览历史
 - 交互式 REPL，支持基于上一次列表结果按序号继续操作
-- 全屏 TUI，支持首页推荐流、分区切换、方向键浏览、回车进入详情页、历史视图、返回栈和帮助浮层
+- Textual 全屏 UI：支持首页推荐流、分区切换、搜索、详情页、评论预览、历史、收藏、帮助浮层
+- Textual 主题切换：`Ctrl+T / F2`，并写回 `~/.biliterminal/config.toml`
+- 命令面板入口：`Theme` / `Keys`
 - TUI 搜索框支持直接输入中文关键词
 
 ## 运行
@@ -227,6 +240,7 @@ bili> search 原神 1 5
 - 完整 Screen 流：`HomeScreen`、`SearchScreen`、`DetailScreen`、`HistoryScreen`、`FavoritesScreen`
 - 统一 Widget：`VideoList`、`CommentView`、`AudioBar`
 - 保留原键位语义：`↑/↓ / j/k`、`Enter`、`Esc/b`、`/ / s`、`Tab/Shift+Tab`、`1-9 / 0`、`l`、`d`、`h`、`v`、`m`、`f`、`a`、`x`、`n/p`、`PgUp/PgDn`、`o`、`c`、`r`、`?`、`q`
+- 主题菜单与帮助菜单：命令面板 `Ctrl+P` 可直接进入 `Theme` / `Keys`
 - 结构说明：[`docs/textual-phase1-architecture.md`](docs/textual-phase1-architecture.md)
 - 兼容约束：现有 `python3 -m bili_terminal tui`、`./bili_terminal/start.sh`、macOS `.app` 打包继续保留
 - 入口语义：`tui` 仍然是 legacy curses；`textual` / `new-tui` / `--tui` 才是新版 Textual UI；macOS `.app` 默认双击启动新版 Textual
@@ -254,6 +268,12 @@ theme = "light"  # dark / light
 
 ```bash
 python3 -m unittest discover -s bili_terminal/tests -v
+```
+
+README 截图可通过下面的脚本重新生成：
+
+```bash
+./.venv/bin/python bili_terminal/generate_readme_screenshots.py
 ```
 
 ## 说明
