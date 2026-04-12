@@ -913,19 +913,7 @@ def spawn_audio_worker(stream: AudioStream) -> int:
     log_path = audio_worker_log_path()
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
     log_handle = open(log_path, "ab")
-    command = [
-        sys.executable,
-        os.path.abspath(__file__),
-        "audio-worker",
-        "--url",
-        stream.url,
-        "--referer",
-        stream.referer,
-        "--user-agent",
-        stream.user_agent,
-        "--title",
-        stream.title,
-    ]
+    command = audio_worker_command(stream)
     try:
         process = subprocess.Popen(
             command,
@@ -937,6 +925,26 @@ def spawn_audio_worker(stream: AudioStream) -> int:
         return process.pid
     finally:
         log_handle.close()
+
+
+def audio_worker_command(stream: AudioStream) -> list[str]:
+    command = [sys.executable]
+    if not getattr(sys, "frozen", False):
+        command.append(os.path.abspath(__file__))
+    command.extend(
+        [
+            "audio-worker",
+            "--url",
+            stream.url,
+            "--referer",
+            stream.referer,
+            "--user-agent",
+            stream.user_agent,
+            "--title",
+            stream.title,
+        ]
+    )
+    return command
 
 
 def play_audio_stream(stream: AudioStream, *, video_key: str | None = None) -> str:

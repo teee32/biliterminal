@@ -3,7 +3,7 @@ from __future__ import annotations
 from textual.reactive import reactive
 from textual.widgets import Static
 
-from ..utils import DEFAULT_AUDIO_STATUS
+from ..utils import AudioStatus, DEFAULT_AUDIO_STATUS
 
 
 class AudioBar(Static):
@@ -31,6 +31,11 @@ class AudioBar(Static):
 
     def set_status(self, message: str) -> None:
         self.status_message = message
+
+    def set_audio_status(self, status: AudioStatus) -> None:
+        self.now_playing = status.now_playing
+        self.play_state = status.state
+        self.status_message = status.status_message
 
     def stop(self) -> None:
         self.play_state = "stopped"

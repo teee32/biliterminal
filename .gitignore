@@ -6,6 +6,8 @@ npm-debug.log*
 __pycache__/
 *.pyc
 dist/
+build/
+*.egg-info/
 .omx/
 memoapp1/
 MT2.26.4.apk

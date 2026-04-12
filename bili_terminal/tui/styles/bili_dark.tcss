@@ -1,103 +1,389 @@
+App {
+    background: #09111f;
+    color: #f4f9ff;
+}
+
+App.theme-light {
+    background: #fff7fb;
+    color: #4a2c39;
+}
+
 Screen {
-    background: #0b1020;
-    color: #f7f9fc;
+    background: #09111f;
+    color: #f4f9ff;
 }
 
 Header,
 Footer {
-    background: #141a2e;
-    color: #f7f9fc;
+    background: #0f1c33;
+    color: #dff4ff;
 }
 
-#home-layout {
+#page-shell {
     height: 1fr;
     padding: 1 1 0 1;
+    background: #09111f;
+}
+
+#page-masthead {
+    height: auto;
+    padding: 0 2;
+    margin-bottom: 1;
+    border: round #fb7299;
+    background: #10233f;
+    color: #fef7fb;
+    text-style: bold;
+}
+
+#browser-layout,
+#detail-layout {
+    height: 1fr;
+    background: #09111f;
 }
 
 .panel {
-    border: round #334155;
-    background: #111827;
     padding: 1;
+    border: round #314c78;
+    background: #0f1729;
+}
+
+.panel-main {
+    width: 2fr;
+    margin: 0 1;
+}
+
+#main-pane,
+#detail-main-pane {
+    padding: 0;
+    background: transparent;
+    border: none;
+}
+
+.panel-side {
+    width: 36;
 }
 
 #sidebar-pane {
-    width: 28;
-    margin-right: 1;
+    width: 26;
 }
 
-#main-pane {
+#detail-main-pane {
     width: 2fr;
     margin-right: 1;
 }
 
+#detail-side-pane,
 #detail-pane {
     width: 1fr;
 }
 
-.panel-title {
-    color: #fb7299;
+.panel-title,
+#feed-section-title {
+    color: #8ee1ff;
     text-style: bold;
+}
+
+#sidebar-intro,
+#screen-subtitle,
+#screen-meta,
+#detail-meta,
+#detail-hint,
+#feed-section-hint,
+#theme-picker-subtitle,
+#theme-picker-hint {
+    color: #b9cae8;
+}
+
+#sidebar-intro {
     margin-bottom: 1;
 }
 
-#hero-title {
-    color: #8bd6ff;
-    text-style: bold;
-    margin-bottom: 1;
-}
-
-#hero-subtitle,
-#mode-banner,
-#status-line,
-#help-overlay,
+.surface-card,
+#screen-banner,
+#detail-summary,
 CommentView,
-AudioBar {
+#detail-scroll,
+#channel-list,
+VideoList,
+#theme-picker-list {
+    border: round #233f68;
+    background: #141f35;
+}
+
+#hero-card,
+#detail-hero-card {
+    height: auto;
+    padding: 0 2;
+    background: #112540;
+    border: round #00a1d6;
+    margin-bottom: 0;
+}
+
+#feed-card {
+    height: 1fr;
+    padding: 0 1 1 1;
+    background: #0f1a30;
+    border: round #233f68;
+}
+
+#screen-title,
+#detail-title {
+    color: #ffffff;
+    text-style: bold;
+}
+
+#screen-title {
+    margin-bottom: 0;
+}
+
+#screen-banner,
+#detail-meta {
+    margin-top: 0;
+    padding: 0 1;
+    background: #173254;
+    border: round #00a1d6;
+    color: #eaf9ff;
+}
+
+#screen-meta,
+#feed-section-title,
+#feed-section-hint,
+#detail-hint,
+CommentView,
+AudioBar,
+#status-line,
+#help-overlay {
     margin-top: 1;
 }
 
-#mode-banner {
-    color: #c5d0e6;
+#screen-subtitle,
+#screen-meta {
+    margin-top: 0;
+}
+
+#feed-section-title {
+    padding: 0 1;
+}
+
+#feed-section-hint {
+    padding: 0 1;
+}
+
+VideoList,
+#channel-list,
+#detail-scroll {
+    height: 1fr;
+}
+
+#feed-card VideoList,
+#detail-main-pane #detail-scroll {
+    margin-top: 0;
+}
+
+#feed-card VideoList {
+    border: none;
+    background: transparent;
+}
+
+#detail-summary {
+    padding: 1 1;
+    color: #eef5ff;
+}
+
+#detail-lines,
+CommentView,
+.theme-picker__item,
+.video-list__item,
+.channel-item {
+    color: #eef5ff;
+}
+
+#detail-scroll {
+    padding: 0 1;
+}
+
+.video-list__item,
+.channel-item {
+    padding: 0 1 1 1;
+}
+
+ListView > ListItem {
+    margin-bottom: 0;
+}
+
+ListView > ListItem.--highlight {
+    background: #1f4e8d;
+    color: #ffffff;
+    border: round #5ca9ff;
 }
 
 #status-line {
     padding: 1;
     margin: 0 1 0 1;
-    border: round #2b9ed1;
-    background: #101827;
-    color: #8bd6ff;
+    border: round #00a1d6;
+    background: #102747;
+    color: #d8f3ff;
 }
 
 AudioBar {
     padding: 1;
     margin: 0 1;
     border: round #fb7299;
-    background: #171a27;
-    color: #f7f9fc;
+    background: #2a1630;
+    color: #fff7fb;
 }
 
 #help-overlay {
     padding: 1;
     margin: 0 1 1 1;
-    border: round #64748b;
-    background: #0f172a;
-    color: #dbe4f3;
+    border: round #5d7ca8;
+    background: #0d1830;
+    color: #eef5ff;
+}
+
+#search-input {
+    margin-bottom: 1;
+    background: #132545;
+    color: #f4f9ff;
+    border: round #00a1d6;
+}
+
+#theme-picker-dialog {
+    width: 72;
+    max-width: 88%;
+    height: auto;
+    border: round #fb7299;
+    background: #101c34;
+    padding: 1 2;
+    align-horizontal: center;
+    align-vertical: middle;
+}
+
+#theme-picker-title {
+    color: #fb7299;
+    text-style: bold;
+}
+
+#theme-picker-list {
+    margin-top: 1;
+    height: auto;
+    max-height: 8;
 }
 
 .hidden {
     display: none;
 }
 
-#channel-list,
-VideoList {
-    height: 1fr;
+App.theme-light Screen {
+    background: #fff7fb;
+    color: #4a2c39;
 }
 
-.video-list__item,
-.channel-item {
-    padding: 0 1;
+App.theme-light #page-shell,
+App.theme-light #browser-layout,
+App.theme-light #detail-layout {
+    background: #fff7fb;
 }
 
-ListView > ListItem.--highlight {
-    background: #1d3358;
-    color: #ffffff;
+App.theme-light Header,
+App.theme-light Footer {
+    background: #ffe2ed;
+    color: #8d2d53;
+}
+
+App.theme-light #page-masthead {
+    background: #fff2f7;
+    border: round #fb7299;
+    color: #8d2d53;
+}
+
+App.theme-light .panel {
+    background: #ffffff;
+    border: round #f1c7d8;
+}
+
+App.theme-light #hero-card,
+App.theme-light #detail-hero-card {
+    background: #eaf8ff;
+    border: round #00a1d6;
+}
+
+App.theme-light #feed-card,
+App.theme-light #theme-picker-dialog {
+    background: #ffffff;
+    border: round #f1c7d8;
+}
+
+App.theme-light .panel-title,
+App.theme-light #feed-section-title,
+App.theme-light #screen-title,
+App.theme-light #detail-title,
+App.theme-light #theme-picker-title {
+    color: #00a1d6;
+}
+
+App.theme-light #sidebar-intro,
+App.theme-light #screen-subtitle,
+App.theme-light #screen-meta,
+App.theme-light #detail-meta,
+App.theme-light #detail-hint,
+App.theme-light #detail-summary,
+App.theme-light #detail-lines,
+App.theme-light CommentView,
+App.theme-light AudioBar,
+App.theme-light #status-line,
+App.theme-light #help-overlay,
+App.theme-light #theme-picker-subtitle,
+App.theme-light #theme-picker-hint,
+App.theme-light .theme-picker__item,
+App.theme-light .video-list__item,
+App.theme-light .channel-item {
+    color: #6f3150;
+}
+
+App.theme-light #screen-banner,
+App.theme-light #detail-meta {
+    background: #e8f7ff;
+    border: round #00a1d6;
+    color: #245a73;
+}
+
+App.theme-light #detail-summary,
+App.theme-light #help-overlay,
+App.theme-light #theme-picker-list,
+App.theme-light VideoList,
+App.theme-light #channel-list,
+App.theme-light #detail-scroll,
+App.theme-light CommentView {
+    background: #fff3f8;
+    border: round #ffd1e1;
+}
+
+App.theme-light #feed-card VideoList {
+    background: transparent;
+    border: none;
+}
+
+App.theme-light #status-line {
+    background: #ffe3ee;
+    border: round #fb7299;
+    color: #8f2752;
+}
+
+App.theme-light AudioBar {
+    background: #fff0f6;
+    border: round #fb7299;
+    color: #7c2448;
+}
+
+App.theme-light #search-input {
+    background: #fffafb;
+    color: #7a2146;
+    border: round #fb7299;
+}
+
+App.theme-light ListView > ListItem.--highlight {
+    background: #ffd1e1;
+    color: #7a2146;
+    border: round #fb7299;
 }

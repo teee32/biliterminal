@@ -44,6 +44,46 @@ class FormattingTests(unittest.TestCase):
     def test_normalize_keyword_drops_suspicious_garbage(self) -> None:
         self.assertEqual(cli.normalize_keyword("ã, æ"), "")
 
+    def test_audio_worker_command_uses_script_path_when_not_frozen(self) -> None:
+        stream = cli.AudioStream(
+            title="标题",
+            url="https://example.com/audio.m4s",
+            referer="https://www.bilibili.com/video/BV1xx411c7mu",
+            user_agent="UA",
+            source_kind="dash-audio",
+        )
+        with mock.patch.object(cli.sys, "executable", "/tmp/python"), mock.patch.object(cli.sys, "frozen", False, create=True):
+            command = cli.audio_worker_command(stream)
+        self.assertEqual(command[0], "/tmp/python")
+        self.assertTrue(command[1].endswith("bilibili_cli.py"))
+        self.assertEqual(command[2:], ["audio-worker", "--url", stream.url, "--referer", stream.referer, "--user-agent", "UA", "--title", "标题"])
+
+    def test_audio_worker_command_uses_frozen_executable_without_script_path(self) -> None:
+        stream = cli.AudioStream(
+            title="标题",
+            url="https://example.com/audio.m4s",
+            referer="https://www.bilibili.com/video/BV1xx411c7mu",
+            user_agent="UA",
+            source_kind="dash-audio",
+        )
+        with mock.patch.object(cli.sys, "executable", "/Applications/BiliTerminal.app/Contents/Resources/runtime/BiliTerminal"), mock.patch.object(cli.sys, "frozen", True, create=True):
+            command = cli.audio_worker_command(stream)
+        self.assertEqual(
+            command,
+            [
+                "/Applications/BiliTerminal.app/Contents/Resources/runtime/BiliTerminal",
+                "audio-worker",
+                "--url",
+                stream.url,
+                "--referer",
+                stream.referer,
+                "--user-agent",
+                "UA",
+                "--title",
+                "标题",
+            ],
+        )
+
     def test_comments_from_payload_extracts_author_and_message(self) -> None:
         comments = cli.comments_from_payload(
             [

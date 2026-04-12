@@ -1,12 +1,22 @@
 from __future__ import annotations
 
-from textual.app import ComposeResult
-from textual.screen import Screen
-from textual.widgets import Footer, Header, Static
+from ..utils import FeedSnapshot, TextualAdapter
+from .home import BaseFeedScreen
 
 
-class FavoritesScreen(Screen[None]):
-    def compose(self) -> ComposeResult:
-        yield Header(show_clock=False)
-        yield Static("FavoritesScreen 占位：阶段 3 接入 HistoryStore.get_favorite_videos()。")
-        yield Footer()
+class FavoritesScreen(BaseFeedScreen):
+    MODE_KIND = "favorites"
+    SHOW_SEARCH = False
+    ALLOW_PAGING = False
+
+    def __init__(self, *, adapter: TextualAdapter, initial_audio=None) -> None:
+        super().__init__(adapter=adapter, initial_audio=initial_audio)
+
+    def subtitle_text(self) -> str:
+        return "收藏夹 · f 取消收藏 · Enter 查看详情 · o 浏览器打开"
+
+    def meta_text(self) -> str:
+        return f"共 {len(self.snapshot.videos)} 条收藏"
+
+    def fetch_snapshot(self) -> FeedSnapshot:
+        return self.adapter.favorites()

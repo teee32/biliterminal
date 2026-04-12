@@ -4,7 +4,7 @@ import sys
 
 from .bilibili_cli import main as legacy_main
 
-TEXTUAL_ENTRYPOINTS = {"textual", "new-tui"}
+TEXTUAL_ENTRYPOINTS = {"textual", "new-tui", "--tui"}
 LEGACY_TUI_ENTRYPOINTS = {"legacy-tui", "--legacy-tui"}
 
 

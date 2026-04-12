@@ -4,6 +4,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
+export TERM="${TERM:-xterm-256color}"
+export COLORTERM="${COLORTERM:-truecolor}"
+
 PYTHON_BIN="python3"
 if [ -x "$ROOT_DIR/.venv/bin/python" ]; then
   PYTHON_BIN="$ROOT_DIR/.venv/bin/python"
@@ -14,7 +17,7 @@ if [ "$#" -eq 0 ]; then
 fi
 
 case "$1" in
-  textual|new-tui|legacy-tui|--legacy-tui)
+  textual|new-tui|--tui|legacy-tui|--legacy-tui)
     exec "$PYTHON_BIN" -m bili_terminal "$@"
     ;;
 esac

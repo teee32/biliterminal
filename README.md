@@ -24,11 +24,12 @@ git clone https://github.com/teee32/biliterminal.git && cd biliterminal && ./bil
 ./biliterminal --legacy-tui   # 显式强制 legacy curses fallback
 ```
 
-直接一键启动 Textual 预览版：
+直接一键启动新版 Textual：
 
 ```bash
 ./biliterminal textual
 ./biliterminal new-tui
+./biliterminal --tui
 ```
 
 如果想直接启动某个命令：
@@ -51,20 +52,30 @@ git clone https://github.com/teee32/biliterminal.git && cd biliterminal && ./bil
 兼容方式：
 
 ```bash
-python3 -m bili_terminal tui
-python3 -m bili_terminal textual
+python3 -m bili_terminal tui          # 旧版 legacy curses TUI
+python3 -m bili_terminal textual      # 新版 Textual UI
+python3 -m bili_terminal --tui        # 新版 Textual UI
 python3 -m bili_terminal --legacy-tui
 ./bili_terminal/start.sh
-./bili_terminal/start.sh textual
+./bili_terminal/start.sh textual      # 新版 Textual UI
+./bili_terminal/start.sh --tui
 ./bili_terminal/start.sh --legacy-tui
 ```
 
 自己构建 macOS 双击版：
 
 ```bash
+python3 -m pip install -e '.[build]'
 ./bili_terminal/build_macos_app.sh
 open dist/BiliTerminal.app
 ```
+
+构建依赖（macOS）：
+
+- `pyinstaller`
+- `osacompile`
+- `ditto`
+- `clang`（用于原生音频 helper，缺失时会回退到运行时再尝试编译）
 
 ## 界面预览
 
@@ -125,7 +136,7 @@ python3 bili_terminal/bilibili_cli.py tui
 python3 -m bili_terminal recommend -n 5
 python3 -m bili_terminal rank music --day 7
 python3 -m bili_terminal bangumi 番剧 --index -n 5
-python3 -m bili_terminal tui
+python3 -m bili_terminal textual
 python3 -m unittest discover -s bili_terminal/tests -v
 ```
 
@@ -154,7 +165,14 @@ open dist/BiliTerminal.app
 
 如果要发给别人，直接把 `dist/BiliTerminal-macOS.zip` 发过去，解压后双击 `.app`。
 
-当前双击版仍需要目标机器能找到 `python3`。启动日志会写到 `~/.biliterminal/launcher.log`。
+当前双击版会优先运行包内置的独立 runtime，**不再要求目标机器额外安装 `python3`**。启动日志会写到 `~/.biliterminal/launcher.log`。
+
+分发注意事项：
+
+- 这是 **macOS 专用** 产物
+- 当前 `.app` 只做了 **ad-hoc 签名**，还**没有 Developer ID 签名 / notarization**，在别的 Mac 上第一次打开可能会被 Gatekeeper 拦截
+- 当前发行物是**本机架构构建**；如果你要同时覆盖 Intel Mac 和 Apple Silicon，建议分别验证或单独做双架构发布
+- 构建脚本现在会在打包后自动做一次 `launch.command --help` 烟测，确认优先走包内 runtime，而不是回退到系统 `python3`
 
 ## REPL 示例
 
@@ -190,6 +208,7 @@ bili> search 原神 1 5
 - `f`：收藏 / 取消收藏当前视频
 - `a`：播放 / 暂停当前视频音频
 - `x`：停止当前音频
+- `Ctrl+T`：深色 / 浅色主题即时切换（并写回 `~/.biliterminal/config.toml`）
 - `n/p`：翻页
 - `PgUp/PgDn`：在详情页滚动
 - `o`：浏览器打开当前视频
@@ -198,24 +217,38 @@ bili> search 原神 1 5
 - `?`：显示帮助浮层
 - `q`：退出
 
-## Textual 重构阶段 1
+## Textual v0.3.0
 
-当前仓库已经落下 Textual 阶段 1 骨架，在**不破坏现有 CLI / curses TUI** 的前提下提供：
+当前仓库已经完成 Textual 版主流程，在**不破坏现有 CLI / legacy curses TUI** 的前提下提供：
 
 - 发布策略：默认 shell 启动仍走 legacy curses TUI，`textual` / `new-tui` 显式进入新 UI，`legacy-tui` / `--legacy-tui` 作为强制 fallback 保留
 - 统一入口：`python3 -m bili_terminal ...`、仓库根目录 `./biliterminal`、以及 `bili_terminal/start.sh` 共享同一套 launch 语义
 - 安装后入口：`python3 -m pip install -e .` 会注册 `biliterminal` 命令，保持与仓库脚本一致的参数行为
+- 完整 Screen 流：`HomeScreen`、`SearchScreen`、`DetailScreen`、`HistoryScreen`、`FavoritesScreen`
+- 统一 Widget：`VideoList`、`CommentView`、`AudioBar`
+- 保留原键位语义：`↑/↓ / j/k`、`Enter`、`Esc/b`、`/ / s`、`Tab/Shift+Tab`、`1-9 / 0`、`l`、`d`、`h`、`v`、`m`、`f`、`a`、`x`、`n/p`、`PgUp/PgDn`、`o`、`c`、`r`、`?`、`q`
+- 结构说明：[`docs/textual-phase1-architecture.md`](docs/textual-phase1-architecture.md)
+- 兼容约束：现有 `python3 -m bili_terminal tui`、`./bili_terminal/start.sh`、macOS `.app` 打包继续保留
+- 入口语义：`tui` 仍然是 legacy curses；`textual` / `new-tui` / `--tui` 才是新版 Textual UI；macOS `.app` 默认双击启动新版 Textual
 
-- `bili_terminal/tui/app.py` 主入口
-- `HomeScreen` 首页骨架（Sidebar / VideoList / Detail / CommentView / AudioBar）
-- `screens/`、`widgets/`、`styles/` 目录结构
-- `test_textual_app.py` smoke tests
+启动方式：
 
-- 详细方案：[`docs/textual-phase1-architecture.md`](docs/textual-phase1-architecture.md)
-- 兼容约束：现有 `python3 -m bili_terminal tui`、`./bili_terminal/start.sh` 继续保留
-- 迁移约束：新增 Textual 入口时统一保留 `legacy-tui` / `--legacy-tui` 作为旧版 curses fallback
-- 预览启动：`python3 -m bili_terminal textual`（或 `./biliterminal textual`）
-- 打包提示：macOS app 构建脚本后续需要一并复制 `bili_terminal/tui/` 与 `styles/bili_dark.tcss` 资源
+```bash
+python3 -m bili_terminal textual
+./biliterminal textual
+./bili_terminal/start.sh textual
+```
+
+主题配置（热重载）：
+
+- 配置文件：`~/.biliterminal/config.toml`
+- TUI 内可直接按 `Ctrl+T` 在 `dark / light` 间切换，切换后会立刻重载并持久化到配置文件
+- 示例：
+
+```toml
+[ui]
+theme = "light"  # dark / light
+```
 
 ## 测试
 
