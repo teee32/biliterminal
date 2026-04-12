@@ -1,45 +1,50 @@
 # BiliTerminal
 
-一个轻量、低打扰、适合在终端里快速刷一眼的 Bilibili 客户端。
+一个以 **Textual v0.3 UI** 为主的终端 Bilibili 客户端。
 
 适合上班空隙快速看首页、刷分区排行、搜中文视频、翻评论、顺手先收藏，等有空了再去网页端继续看。
 
-当前仓库同时提供两套界面：
+当前主界面与后续演进方向都围绕 **Textual**：
 
-- **Textual v0.3 UI**：新版主界面，支持主题切换、帮助浮层、详情页、评论预览、历史/收藏、音频控制
-- **legacy curses TUI**：旧版 fallback，保留原有入口与兼容行为
-
-macOS `.app` 双击启动默认进入 **Textual v0.3**；仓库里的 shell 脚本默认仍保留 legacy fallback。
+- **Textual v0.3 UI**：首页内容流、搜索、详情页、评论预览、历史/收藏、主题切换、帮助浮层
+- **macOS `.app` 双击版**：默认直接进入 Textual
+- **legacy curses TUI**：仅作为兼容 fallback 保留，不再作为 README 重点展示
 
 ## 快速启动
+
+最推荐：直接进入 Textual。
 
 macOS 双击版：
 
 - 直接下载：<https://github.com/teee32/biliterminal/releases/latest/download/BiliTerminal-macOS.zip>
 - 解压后双击 `BiliTerminal.app`
 
-源码启动：
+源码启动 Textual：
 
 ```bash
-git clone https://github.com/teee32/biliterminal.git && cd biliterminal && ./biliterminal
-```
-
-已经 clone 下来之后：
-
-```bash
-./biliterminal                # 默认进入 legacy curses TUI（兼容保留）
-./biliterminal --legacy-tui   # 显式强制 legacy curses fallback
-```
-
-直接进入新版 Textual：
-
-```bash
+git clone https://github.com/teee32/biliterminal.git && cd biliterminal
 ./biliterminal textual
-./biliterminal new-tui
+# 或
 ./biliterminal --tui
 ```
 
-如果想直接启动某个命令：
+模块入口：
+
+```bash
+python3 -m bili_terminal textual
+python3 -m bili_terminal --tui
+```
+
+兼容 fallback（legacy curses）仍然保留：
+
+```bash
+./biliterminal
+./biliterminal --legacy-tui
+python3 -m bili_terminal tui
+python3 -m bili_terminal --legacy-tui
+```
+
+直接使用功能命令：
 
 ```bash
 ./biliterminal recommend -n 5
@@ -47,26 +52,8 @@ git clone https://github.com/teee32/biliterminal.git && cd biliterminal && ./bil
 ./biliterminal bangumi 番剧 --index -n 5
 ./biliterminal search 中文 -n 5
 ./biliterminal audio BV19K9uBmEdx
-./biliterminal audio pause
-./biliterminal audio resume
-./biliterminal audio stop
 ./biliterminal favorite BV19K9uBmEdx
-./biliterminal favorites
-./biliterminal favorites open 1
 ./biliterminal comments BV19K9uBmEdx -n 3
-```
-
-兼容方式：
-
-```bash
-python3 -m bili_terminal tui          # 旧版 legacy curses TUI
-python3 -m bili_terminal textual      # 新版 Textual UI
-python3 -m bili_terminal --tui        # 新版 Textual UI
-python3 -m bili_terminal --legacy-tui
-./bili_terminal/start.sh
-./bili_terminal/start.sh textual      # 新版 Textual UI
-./bili_terminal/start.sh --tui
-./bili_terminal/start.sh --legacy-tui
 ```
 
 自己构建 macOS 双击版：
@@ -86,7 +73,7 @@ open dist/BiliTerminal.app
 
 ## 界面预览
 
-下面这几张都是当前版本 README 重新生成的真实运行截图（Textual v0.3）。
+下面两张都是当前版本的真实运行截图，重点展示 **Textual v0.3**。
 
 ### 首页流
 
@@ -95,10 +82,6 @@ open dist/BiliTerminal.app
 ### 搜索与评论
 
 ![BiliTerminal 搜索与评论](assets/readme/tui-search.png)
-
-### 详情页
-
-![BiliTerminal 详情页](assets/readme/tui-detail.png)
 
 ## 当前能力
 
