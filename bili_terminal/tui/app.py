@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 from typing import Any
 
 TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
@@ -9,14 +10,22 @@ try:
     from textual.app import App
     from textual.binding import Binding
     from textual.events import Key
-except ModuleNotFoundError as exc:  # pragma: no cover - exercised by smoke tests when deps are absent
+except (
+    ModuleNotFoundError
+) as exc:  # pragma: no cover - exercised by smoke tests when deps are absent
     TEXTUAL_IMPORT_ERROR = exc
     App = object  # type: ignore[assignment]
     Binding = None  # type: ignore[assignment]
     Key = Any  # type: ignore[assignment,misc]
 else:
     from ..bilibili_cli import BilibiliClient, HistoryStore
-    from .screens import FavoritesScreen, HistoryScreen, HomeScreen, SearchScreen, ThemePickerScreen
+    from .screens import (
+        FavoritesScreen,
+        HistoryScreen,
+        HomeScreen,
+        SearchScreen,
+        ThemePickerScreen,
+    )
     from .utils import TextualAdapter, load_tui_config, save_tui_config
 
 LEGACY_KEYMAP_SUMMARY = [
@@ -89,10 +98,14 @@ if TEXTUAL_IMPORT_ERROR is None:
             super().__init__()
             self.client = client or BilibiliClient()
             self.history_store = history_store or HistoryStore()
-            self.adapter = adapter or TextualAdapter(client=self.client, history_store=self.history_store)
+            self.adapter = adapter or TextualAdapter(
+                client=self.client, history_store=self.history_store
+            )
             self.audio_status = self.adapter.current_audio_status()
             self.tui_config = load_tui_config()
-            self._home_screen = HomeScreen(adapter=self.adapter, initial_audio=self.audio_status)
+            self._home_screen = HomeScreen(
+                adapter=self.adapter, initial_audio=self.audio_status
+            )
 
         def on_mount(self) -> None:
             self.install_screen(self._home_screen, "home")
@@ -132,7 +145,10 @@ if TEXTUAL_IMPORT_ERROR is None:
 
         def _poll_config(self) -> None:
             latest = load_tui_config(self.tui_config.path)
-            if latest.theme == self.tui_config.theme and latest.mtime == self.tui_config.mtime:
+            if (
+                latest.theme == self.tui_config.theme
+                and latest.mtime == self.tui_config.mtime
+            ):
                 return
             self.tui_config = latest
             self.sync_theme()
@@ -143,14 +159,18 @@ if TEXTUAL_IMPORT_ERROR is None:
                 current_screen = self.screen
                 status_setter = getattr(current_screen, "set_status", None)
                 if callable(status_setter):
-                    status_setter(f"当前已是{'浅色' if normalized == 'light' else '深色'}主题（{source}）")
+                    status_setter(
+                        f"当前已是{'浅色' if normalized == 'light' else '深色'}主题（{source}）"
+                    )
                 return
             self.tui_config = save_tui_config(normalized, self.tui_config.path)
             self.sync_theme()
             current_screen = self.screen
             status_setter = getattr(current_screen, "set_status", None)
             if callable(status_setter):
-                status_setter(f"主题已切换为 {'浅色' if normalized == 'light' else '深色'}（{source}）")
+                status_setter(
+                    f"主题已切换为 {'浅色' if normalized == 'light' else '深色'}（{source}）"
+                )
 
         def _handle_theme_selection(self, theme: str | None) -> None:
             if theme:
@@ -171,7 +191,9 @@ if TEXTUAL_IMPORT_ERROR is None:
             yield ("Theme", "切换 BiliTerminal 主题", self.action_change_theme, True)
             if callable(help_handler):
                 yield ("Keys", "显示 / 关闭当前页面快捷键帮助", help_handler, True)
-            for name, help_text, callback, discover in super().get_system_commands(screen):
+            for name, help_text, callback, discover in super().get_system_commands(
+                screen
+            ):
                 if name in {"Theme", "Keys"}:
                     continue
                 yield (name, help_text, callback, discover)
@@ -186,13 +208,23 @@ if TEXTUAL_IMPORT_ERROR is None:
             self.call_after_refresh(lambda: self._home_screen.set_channel(index))
 
         def open_search(self, *, keyword: str = "") -> None:
-            self.push_screen(SearchScreen(adapter=self.adapter, initial_audio=self.audio_status, keyword=keyword))
+            self.push_screen(
+                SearchScreen(
+                    adapter=self.adapter,
+                    initial_audio=self.audio_status,
+                    keyword=keyword,
+                )
+            )
 
         def open_history(self) -> None:
-            self.push_screen(HistoryScreen(adapter=self.adapter, initial_audio=self.audio_status))
+            self.push_screen(
+                HistoryScreen(adapter=self.adapter, initial_audio=self.audio_status)
+            )
 
         def open_favorites(self) -> None:
-            self.push_screen(FavoritesScreen(adapter=self.adapter, initial_audio=self.audio_status))
+            self.push_screen(
+                FavoritesScreen(adapter=self.adapter, initial_audio=self.audio_status)
+            )
 
         def _dispatch(self, method_name: str, *args: Any) -> None:
             handler = getattr(self.screen, method_name, None)
@@ -285,7 +317,6 @@ else:
             )
 
 
-
 def create_app(
     *,
     client=None,
@@ -297,14 +328,14 @@ def create_app(
     return BiliTerminalApp(client=client, history_store=history_store, adapter=adapter)
 
 
-
 def run_textual_app() -> int:
     if TEXTUAL_IMPORT_ERROR is not None:
-        print("Textual 依赖缺失，请先执行 `python3 -m pip install -e .`。", file=sys.stderr)
+        repo_root = Path(__file__).resolve().parents[2]
+        install_command = f'"{sys.executable}" -m pip install -e "{repo_root}"'
+        print(f"Textual 依赖缺失，请先执行 `{install_command}`。", file=sys.stderr)
         return 1
     create_app().run()
     return 0
-
 
 
 def main() -> int:

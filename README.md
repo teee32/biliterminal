@@ -8,7 +8,8 @@
 
 - **Textual v0.3 UI**：首页内容流、搜索、详情页、评论预览、历史/收藏、主题切换、帮助浮层
 - **macOS `.app` 双击版**：默认直接进入 Textual
-- **legacy curses TUI**：仅作为兼容 fallback 保留，不再作为 README 重点展示
+- **Windows 免安装版**：解压后双击 `launch.bat` 即可运行
+- **legacy curses TUI**：仅作为兼容 fallback 保留，不在 Windows 上支持
 
 ## 快速启动
 
@@ -21,6 +22,8 @@ macOS 双击版：
 
 源码启动 Textual：
 
+macOS / Linux：
+
 ```bash
 git clone https://github.com/teee32/biliterminal.git && cd biliterminal
 ./biliterminal textual
@@ -28,14 +31,28 @@ git clone https://github.com/teee32/biliterminal.git && cd biliterminal
 ./biliterminal --tui
 ```
 
+Windows：
+
+```bat
+git clone https://github.com/teee32/biliterminal.git && cd biliterminal
+biliterminal.bat textual
+:: 或
+biliterminal.bat --tui
+```
+
 模块入口：
 
 ```bash
+# macOS / Linux
 python3 -m bili_terminal textual
 python3 -m bili_terminal --tui
+
+# Windows
+python -m bili_terminal textual
+python -m bili_terminal --tui
 ```
 
-兼容 fallback（legacy curses）仍然保留：
+兼容 fallback（legacy curses，仅 macOS / Linux）：
 
 ```bash
 ./biliterminal
@@ -70,6 +87,24 @@ open dist/BiliTerminal.app
 - `osacompile`
 - `ditto`
 - `clang`（用于原生音频 helper，缺失时会回退到运行时再尝试编译）
+
+自己构建 Windows 免安装版：
+
+```powershell
+python -m pip install -e ".[build]"
+powershell -ExecutionPolicy Bypass -File .\bili_terminal\windows\build_windows_app.ps1
+```
+
+构建完成后会生成：
+
+- `dist\BiliTerminal\` — 免安装目录，双击 `launch.bat` 启动
+- `dist\BiliTerminal-Windows.zip` — 压缩包，可分发
+
+构建依赖（Windows）：
+
+- `pyinstaller`
+- PowerShell 5.1+（Windows 11 自带）
+- 音频播放需要 `ffplay`（FFmpeg 附带，已包含在 PATH 即可）
 
 ## 界面预览
 
@@ -110,6 +145,7 @@ open dist/BiliTerminal.app
 项目文件已经集中在 `bili_terminal/` 目录下，直接运行目录内的脚本即可。
 
 ```bash
+# macOS / Linux
 python3 bili_terminal/bilibili_cli.py hot -n 5
 python3 bili_terminal/bilibili_cli.py recommend -n 5
 python3 bili_terminal/bilibili_cli.py rank --rid 3 --day 7
@@ -134,6 +170,17 @@ python3 -m bili_terminal rank music --day 7
 python3 -m bili_terminal bangumi 番剧 --index -n 5
 python3 -m bili_terminal textual
 python3 -m unittest discover -s bili_terminal/tests -v
+```
+
+```bat
+:: Windows（大部分命令相同，用 python 替代 python3）
+python bili_terminal/bilibili_cli.py hot -n 5
+python bili_terminal/bilibili_cli.py audio BV19K9uBmEdx
+python bili_terminal/bilibili_cli.py audio pause
+python bili_terminal/bilibili_cli.py audio resume
+python bili_terminal/bilibili_cli.py audio stop
+python -m bili_terminal textual
+python -m unittest discover -s bili_terminal/tests -v
 ```
 
 ## macOS 双击运行
@@ -169,6 +216,18 @@ open dist/BiliTerminal.app
 - 当前 `.app` 只做了 **ad-hoc 签名**，还**没有 Developer ID 签名 / notarization**，在别的 Mac 上第一次打开可能会被 Gatekeeper 拦截
 - 当前发行物是**本机架构构建**；如果你要同时覆盖 Intel Mac 和 Apple Silicon，建议分别验证或单独做双架构发布
 - 构建脚本现在会在打包后自动做一次 `launch.command --help` 烟测，确认优先走包内 runtime，而不是回退到系统 `python3`
+
+## Windows 免安装版运行
+
+下载 release：
+
+- <https://github.com/teee32/biliterminal/releases/latest/download/BiliTerminal-Windows.zip>
+
+解压后双击 `launch.bat` 即可启动 Textual UI。
+
+`launch.bat` 会优先使用包内 PyInstaller 打包的 runtime（不需要系统安装 Python），若 runtime 缺失则回退到系统 `python -m bili_terminal --tui`。启动日志写到 `launcher.log`。
+
+音频播放需要 `ffplay`（FFmpeg 附带），请确保 `ffplay` 在 PATH 中。Windows 版不支持 macOS 原生音频 helper 和 `afplay` 回退路径。
 
 ## REPL 示例
 
@@ -264,11 +323,12 @@ README 截图可通过下面的脚本重新生成：
 - CLI 会为接口补齐浏览器请求头，降低被风控 412 的概率。
 - 仓库内直接运行时，搜索词和最近浏览视频会落到 `.omx/state/bilibili-cli-history.json`。
 - 双击版会把历史写到 `~/.biliterminal/state/bilibili-cli-history.json`，并把启动日志写到 `~/.biliterminal/launcher.log`。
-- 音频播放优先使用 `mpv` 或 `ffplay` 直连；macOS 上如果都没装，会自动走后台下载后用原生无窗体 audio helper 播放，只有 helper 不可用时才回退到 `afplay`。
+- 音频播放优先使用 `mpv` 或 `ffplay` 直连；macOS 上如果都没装，会自动走后台下载后用原生无窗体 audio helper 播放，只有 helper 不可用时才回退到 `afplay`；Windows 上使用 `ffplay`，进程暂停/恢复通过 `NtSuspendProcess`/`NtResumeProcess` 实现（零额外依赖）。
 - TUI 里 `a` 是当前视频的播放 / 暂停切换，`x` 会直接停止当前音频；CLI / REPL 里也支持 `audio pause`、`audio resume`、`audio stop`。
 - 这是一个偏“轻量摸鱼”场景的终端浏览器，不是下载器，也没有实现登录态、投稿、评论发送、弹幕发送等需要更高权限的功能。
 - 目前默认聚焦视频内容，不处理直播、课程、专栏、动态等其他内容类型。
 - 终端版已经接入首页推荐、热搜、默认搜索词、入站必刷与分区榜单，但因为 curses 终端没有图片、瀑布流和登录态组件，所以还不是官网像素级复刻。
+- Windows 兼容层：POSIX 信号（`SIGSTOP`/`SIGCONT`/`SIGTERM` 等）通过 `platform_audio` 模块按平台分发，Windows 使用 `ctypes` 调用 ntdll.dll，macOS 逻辑完全不变。legacy curses TUI 不支持 Windows。
 
 ## 致谢
 

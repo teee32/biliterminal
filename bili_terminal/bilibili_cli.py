@@ -27,6 +27,8 @@ import zlib
 from dataclasses import dataclass
 from typing import Any
 
+from . import platform_audio
+
 
 DEFAULT_TIMEOUT = 15
 DEFAULT_STATE_DIR = ".omx/state"
@@ -92,17 +94,83 @@ AID_PATTERN = re.compile(r"\bav(\d+)\b", re.IGNORECASE)
 HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
 WHITESPACE_PATTERN = re.compile(r"\s+")
 COMMON_MOJIBAKE_CHARS = set("ÃÂÐÑãäåæçèéêëìíîïðñòóôõöùúûüýþÿ")
-INITIAL_STATE_PATTERN = re.compile(r"window\.__INITIAL_STATE__=(\{.*?\});\(function", re.S)
-INITIAL_STATE_FALLBACK_PATTERN = re.compile(r"window\.__INITIAL_STATE__=(\{.*?\})\s*var\s+isBilibili", re.S)
-COMMENT_WBI_KEYS_PATTERN = re.compile(r'encWbiKeys:\{wbiImgKey:"([^"]+)",wbiSubKey:"([^"]+)"\}')
+INITIAL_STATE_PATTERN = re.compile(
+    r"window\.__INITIAL_STATE__=(\{.*?\});\(function", re.S
+)
+INITIAL_STATE_FALLBACK_PATTERN = re.compile(
+    r"window\.__INITIAL_STATE__=(\{.*?\})\s*var\s+isBilibili", re.S
+)
+COMMENT_WBI_KEYS_PATTERN = re.compile(
+    r'encWbiKeys:\{wbiImgKey:"([^"]+)",wbiSubKey:"([^"]+)"\}'
+)
 PLAYINFO_PATTERN = re.compile(r"window\.__playinfo__\s*=\s*(\{.*?\})\s*</script>", re.S)
 WBI_KEY_SANITIZE_PATTERN = re.compile(r"[!'()*]")
 COMMENT_WEB_LOCATION = 1315875
 COMMENT_WBI_MIXIN_TABLE = [
-    46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35,
-    27, 43, 5, 49, 33, 9, 42, 19, 29, 28, 14, 39, 12, 38, 41, 13,
-    37, 48, 7, 16, 24, 55, 40, 61, 26, 17, 0, 1, 60, 51, 30, 4,
-    22, 25, 54, 21, 56, 59, 6, 63, 57, 62, 11, 36, 20, 34, 44, 52,
+    46,
+    47,
+    18,
+    2,
+    53,
+    8,
+    23,
+    32,
+    15,
+    50,
+    10,
+    31,
+    58,
+    3,
+    45,
+    35,
+    27,
+    43,
+    5,
+    49,
+    33,
+    9,
+    42,
+    19,
+    29,
+    28,
+    14,
+    39,
+    12,
+    38,
+    41,
+    13,
+    37,
+    48,
+    7,
+    16,
+    24,
+    55,
+    40,
+    61,
+    26,
+    17,
+    0,
+    1,
+    60,
+    51,
+    30,
+    4,
+    22,
+    25,
+    54,
+    21,
+    56,
+    59,
+    6,
+    63,
+    57,
+    62,
+    11,
+    36,
+    20,
+    34,
+    44,
+    52,
 ]
 
 
@@ -225,10 +293,14 @@ def decode_response_body(raw: bytes, content_encoding: str | None) -> str:
 
 def mixin_wbi_key(img_key: str, sub_key: str) -> str:
     merged = img_key + sub_key
-    return "".join(merged[index] for index in COMMENT_WBI_MIXIN_TABLE if index < len(merged))[:32]
+    return "".join(
+        merged[index] for index in COMMENT_WBI_MIXIN_TABLE if index < len(merged)
+    )[:32]
 
 
-def sign_wbi_params(params: dict[str, Any], img_key: str, sub_key: str) -> dict[str, Any]:
+def sign_wbi_params(
+    params: dict[str, Any], img_key: str, sub_key: str
+) -> dict[str, Any]:
     signed = dict(params)
     signed["wts"] = str(round(time.time()))
     for key, value in list(signed.items()):
@@ -238,7 +310,9 @@ def sign_wbi_params(params: dict[str, Any], img_key: str, sub_key: str) -> dict[
         f"{urllib.parse.quote(str(key), safe='')}={urllib.parse.quote(str(signed[key]), safe='')}"
         for key in sorted(signed)
     )
-    signed["w_rid"] = hashlib.md5(f"{query}{mixin_wbi_key(img_key, sub_key)}".encode("utf-8")).hexdigest()
+    signed["w_rid"] = hashlib.md5(
+        f"{query}{mixin_wbi_key(img_key, sub_key)}".encode("utf-8")
+    ).hexdigest()
     return signed
 
 
@@ -433,7 +507,11 @@ def build_video_url(payload: dict[str, Any]) -> str:
 
 
 def build_watch_url(ref_type: str, value: str) -> str:
-    return f"https://www.bilibili.com/video/{value}" if ref_type == "bvid" else f"https://www.bilibili.com/video/av{value}"
+    return (
+        f"https://www.bilibili.com/video/{value}"
+        if ref_type == "bvid"
+        else f"https://www.bilibili.com/video/av{value}"
+    )
 
 
 def bangumi_episode_id_from_item(item: VideoItem | None) -> int | None:
@@ -492,12 +570,24 @@ def is_bangumi_item(item: VideoItem | None) -> bool:
     if "/bangumi/" in (item.url or ""):
         return True
     raw = item.raw or {}
-    return any(raw.get(field) not in (None, "") for field in ("episode_id", "ep_id", "season_id", "media_id"))
+    return any(
+        raw.get(field) not in (None, "")
+        for field in ("episode_id", "ep_id", "season_id", "media_id")
+    )
 
 
-def resolve_region_rid(region: str | None = None, rid: int | None = None) -> tuple[int, str]:
+def resolve_region_rid(
+    region: str | None = None, rid: int | None = None
+) -> tuple[int, str]:
     if rid is not None:
-        label = next((str(channel["label"]) for channel in HOME_CHANNELS if channel.get("rid") == rid), f"分区 {rid}")
+        label = next(
+            (
+                str(channel["label"])
+                for channel in HOME_CHANNELS
+                if channel.get("rid") == rid
+            ),
+            f"分区 {rid}",
+        )
         if region and region.strip():
             label = region.strip()
         return rid, label
@@ -505,7 +595,9 @@ def resolve_region_rid(region: str | None = None, rid: int | None = None) -> tup
         raise ValueError("请提供分区名，或用 --rid 指定分区 ID")
     resolved = RANK_REGION_ALIASES.get(region.strip().lower())
     if resolved is None:
-        available = "、".join(sorted({label for _, label in RANK_REGION_ALIASES.values()}))
+        available = "、".join(
+            sorted({label for _, label in RANK_REGION_ALIASES.values()})
+        )
         raise ValueError(f"未知分区: {region}（可用: {available}，或直接传 --rid）")
     return resolved
 
@@ -516,27 +608,37 @@ def resolve_bangumi_category(category: str | None = None) -> dict[str, Any]:
     return BANGUMI_CATEGORY_META[key]
 
 
-def build_bangumi_title(category: str, *, index: bool = False, page: int = 1, area: str | None = None) -> str:
+def build_bangumi_title(
+    category: str, *, index: bool = False, page: int = 1, area: str | None = None
+) -> str:
     mode = "索引" if index else "更新"
     suffix = f" · {area}" if area else ""
     return f"{category}{mode}{suffix} | 第 {page} 页"
 
 
 def add_rank_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
-    parser.add_argument("region", nargs="?", help="分区名，如 动画 / 音乐 / 游戏 / 影视")
+    parser.add_argument(
+        "region", nargs="?", help="分区名，如 动画 / 音乐 / 游戏 / 影视"
+    )
     parser.add_argument("--rid", type=int, help="分区 ID，优先级高于分区名")
-    parser.add_argument("--day", type=int, choices=(1, 3, 7), default=3, help="排行周期天数")
+    parser.add_argument(
+        "--day", type=int, choices=(1, 3, 7), default=3, help="排行周期天数"
+    )
     parser.add_argument("-p", "--page", type=int, default=1, help="页码")
     parser.add_argument("-n", "--limit", type=int, default=10, help="数量")
     return parser
 
 
-def build_rank_argument_parser(*, prog: str = "rank", add_help: bool = False) -> argparse.ArgumentParser:
+def build_rank_argument_parser(
+    *, prog: str = "rank", add_help: bool = False
+) -> argparse.ArgumentParser:
     return add_rank_arguments(argparse.ArgumentParser(prog=prog, add_help=add_help))
 
 
 def add_bangumi_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
-    parser.add_argument("category", nargs="?", default="番剧", help="分类：番剧 / 国创 / 影视")
+    parser.add_argument(
+        "category", nargs="?", default="番剧", help="分类：番剧 / 国创 / 影视"
+    )
     parser.add_argument("--index", action="store_true", help="切到索引模式")
     parser.add_argument("--area", help="地区筛选（当前优先用于索引/展示）")
     parser.add_argument("-p", "--page", type=int, default=1, help="页码")
@@ -544,7 +646,9 @@ def add_bangumi_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentP
     return parser
 
 
-def build_bangumi_argument_parser(*, prog: str = "bangumi", add_help: bool = False) -> argparse.ArgumentParser:
+def build_bangumi_argument_parser(
+    *, prog: str = "bangumi", add_help: bool = False
+) -> argparse.ArgumentParser:
     return add_bangumi_arguments(argparse.ArgumentParser(prog=prog, add_help=add_help))
 
 
@@ -582,7 +686,10 @@ def extract_audio_stream(
             audio_candidates.append(entry)
 
     if audio_candidates:
-        selected = max(audio_candidates, key=lambda entry: int(entry.get("bandwidth") or entry.get("id") or 0))
+        selected = max(
+            audio_candidates,
+            key=lambda entry: int(entry.get("bandwidth") or entry.get("id") or 0),
+        )
         stream_url = selected.get("baseUrl") or selected.get("base_url")
         if stream_url:
             return AudioStream(
@@ -643,11 +750,17 @@ def audio_playback_state_path() -> str:
 
 
 def macos_audio_helper_source_path() -> str:
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "macos", "biliterminal_audio_helper.m")
+    return os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "macos",
+        "biliterminal_audio_helper.m",
+    )
 
 
 def macos_audio_helper_binary_path() -> str:
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), MACOS_AUDIO_HELPER_NAME)
+    return os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), MACOS_AUDIO_HELPER_NAME
+    )
 
 
 def macos_cached_audio_helper_path() -> str:
@@ -679,7 +792,9 @@ def compile_macos_audio_helper(source_path: str, output_path: str) -> None:
             text=True,
         )
     except subprocess.CalledProcessError as exc:
-        raise BilibiliAPIError(exc.stderr.strip() or "macOS 音频 helper 编译失败") from exc
+        raise BilibiliAPIError(
+            exc.stderr.strip() or "macOS 音频 helper 编译失败"
+        ) from exc
     os.chmod(output_path, 0o755)
 
 
@@ -705,7 +820,9 @@ def macos_audio_helper_path() -> str | None:
     needs_rebuild = not executable_file_exists(cached_path)
     if not needs_rebuild:
         try:
-            needs_rebuild = os.path.getmtime(source_path) > os.path.getmtime(cached_path)
+            needs_rebuild = os.path.getmtime(source_path) > os.path.getmtime(
+                cached_path
+            )
         except OSError:
             needs_rebuild = True
     if needs_rebuild:
@@ -718,13 +835,7 @@ def macos_audio_helper_path() -> str | None:
 
 
 def pid_exists(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
+    return platform_audio.pid_exists(pid)
 
 
 def save_audio_playback_state(state: AudioPlaybackState) -> None:
@@ -785,8 +896,12 @@ def load_audio_playback_state() -> AudioPlaybackState | None:
             video_key=payload.get("video_key"),
             backend=str(payload.get("backend") or "process"),
             paused=bool(payload.get("paused")),
-            control_pid=int(payload["control_pid"]) if payload.get("control_pid") not in (None, "") else None,
-            media_path=str(payload["media_path"]) if payload.get("media_path") else None,
+            control_pid=int(payload["control_pid"])
+            if payload.get("control_pid") not in (None, "")
+            else None,
+            media_path=str(payload["media_path"])
+            if payload.get("media_path")
+            else None,
         )
     except (KeyError, TypeError, ValueError):
         cleanup_audio_media_path(payload.get("media_path"))
@@ -801,7 +916,7 @@ def load_audio_playback_state() -> AudioPlaybackState | None:
 
 
 def send_audio_signal(pid: int, sig: int) -> None:
-    os.kill(pid, sig)
+    platform_audio.send_signal(pid, sig)
 
 
 def wait_for_audio_exit(pid: int, timeout: float = 1.5) -> None:
@@ -813,11 +928,15 @@ def wait_for_audio_exit(pid: int, timeout: float = 1.5) -> None:
 
 
 def pause_signal_for_state(state: AudioPlaybackState) -> int:
-    return signal.SIGUSR1 if state.backend == "macos-native" else signal.SIGSTOP
+    if state.backend == "macos-native" and hasattr(signal, "SIGUSR1"):
+        return signal.SIGUSR1
+    return platform_audio.suspend_signal()
 
 
 def resume_signal_for_state(state: AudioPlaybackState) -> int:
-    return signal.SIGUSR2 if state.backend == "macos-native" else signal.SIGCONT
+    if state.backend == "macos-native" and hasattr(signal, "SIGUSR2"):
+        return signal.SIGUSR2
+    return platform_audio.resume_signal()
 
 
 def audio_control_target(state: AudioPlaybackState) -> int | None:
@@ -833,19 +952,19 @@ def stop_audio_playback(*, silent: bool = False) -> str:
     try:
         if state.control_pid and pid_exists(state.control_pid):
             try:
-                send_audio_signal(state.control_pid, signal.SIGTERM)
-            except ProcessLookupError:
+                platform_audio.terminate_process(state.control_pid)
+            except (ProcessLookupError, PermissionError):
                 pass
             wait_for_audio_exit(state.control_pid, timeout=0.6)
         if state.pid is not None and pid_exists(state.pid):
             try:
-                send_audio_signal(state.pid, signal.SIGTERM)
-            except ProcessLookupError:
+                platform_audio.terminate_process(state.pid)
+            except (ProcessLookupError, PermissionError):
                 pass
             wait_for_audio_exit(state.pid)
             if pid_exists(state.pid):
                 try:
-                    send_audio_signal(state.pid, signal.SIGKILL)
+                    platform_audio.kill_process(state.pid)
                 except (ProcessLookupError, PermissionError):
                     pass
     except PermissionError:
@@ -857,8 +976,6 @@ def stop_audio_playback(*, silent: bool = False) -> str:
 
 
 def pause_audio_playback() -> str:
-    if os.name == "nt":
-        raise BilibiliAPIError("当前平台不支持暂停音频，请直接停止后重播")
     state = load_audio_playback_state()
     if state is None:
         raise BilibiliAPIError("当前没有音频在播放")
@@ -868,19 +985,22 @@ def pause_audio_playback() -> str:
         target_pid = audio_control_target(state)
         if target_pid is None:
             raise ProcessLookupError
-        send_audio_signal(target_pid, pause_signal_for_state(state))
+        if state.backend == "macos-native":
+            send_audio_signal(target_pid, pause_signal_for_state(state))
+        else:
+            platform_audio.pause_process(target_pid)
     except ProcessLookupError as exc:
         cleanup_audio_media_path(state.media_path)
         clear_audio_playback_state()
         raise BilibiliAPIError("当前没有音频在播放") from exc
+    except PermissionError as exc:
+        raise BilibiliAPIError("暂停音频失败: 权限不足") from exc
     state.paused = True
     save_audio_playback_state(state)
     return f"已暂停音频: {truncate_display(state.title, 40)}"
 
 
 def resume_audio_playback() -> str:
-    if os.name == "nt":
-        raise BilibiliAPIError("当前平台不支持继续音频，请直接重播")
     state = load_audio_playback_state()
     if state is None:
         raise BilibiliAPIError("当前没有音频在播放")
@@ -890,11 +1010,16 @@ def resume_audio_playback() -> str:
         target_pid = audio_control_target(state)
         if target_pid is None:
             raise ProcessLookupError
-        send_audio_signal(target_pid, resume_signal_for_state(state))
+        if state.backend == "macos-native":
+            send_audio_signal(target_pid, resume_signal_for_state(state))
+        else:
+            platform_audio.resume_process(target_pid)
     except ProcessLookupError as exc:
         cleanup_audio_media_path(state.media_path)
         clear_audio_playback_state()
         raise BilibiliAPIError("当前没有音频在播放") from exc
+    except PermissionError as exc:
+        raise BilibiliAPIError("继续音频失败: 权限不足") from exc
     state.paused = False
     save_audio_playback_state(state)
     return f"已继续播放音频: {truncate_display(state.title, 40)}"
@@ -930,7 +1055,7 @@ def spawn_audio_worker(stream: AudioStream) -> int:
 def audio_worker_command(stream: AudioStream) -> list[str]:
     command = [sys.executable]
     if not getattr(sys, "frozen", False):
-        command.append(os.path.abspath(__file__))
+        command.extend(["-m", "bili_terminal"])
     command.extend(
         [
             "audio-worker",
@@ -949,7 +1074,11 @@ def audio_worker_command(stream: AudioStream) -> list[str]:
 
 def play_audio_stream(stream: AudioStream, *, video_key: str | None = None) -> str:
     command = build_audio_player_command(stream)
-    if command is None and macos_audio_helper_path() is None and not (sys.platform == "darwin" and shutil.which("afplay")):
+    if (
+        command is None
+        and macos_audio_helper_path() is None
+        and not (sys.platform == "darwin" and shutil.which("afplay"))
+    ):
         raise BilibiliAPIError("未找到可用播放器，请安装 mpv 或 ffplay")
 
     stop_audio_playback(silent=True)
@@ -970,13 +1099,17 @@ def play_audio_stream(stream: AudioStream, *, video_key: str | None = None) -> s
 
 def prepare_audio_temp_path(url: str) -> str:
     suffix = os.path.splitext(urllib.parse.urlparse(url).path)[1] or ".m4a"
-    temp_file = tempfile.NamedTemporaryFile(prefix="biliterminal-audio-", suffix=suffix, delete=False)
+    temp_file = tempfile.NamedTemporaryFile(
+        prefix="biliterminal-audio-", suffix=suffix, delete=False
+    )
     temp_path = temp_file.name
     temp_file.close()
     return temp_path
 
 
-def download_audio_to_path(url: str, referer: str, user_agent: str, temp_path: str) -> None:
+def download_audio_to_path(
+    url: str, referer: str, user_agent: str, temp_path: str
+) -> None:
     try:
         request = urllib.request.Request(
             url,
@@ -986,7 +1119,10 @@ def download_audio_to_path(url: str, referer: str, user_agent: str, temp_path: s
                 "Referer": referer,
             },
         )
-        with urllib.request.urlopen(request, timeout=60) as response, open(temp_path, "wb") as handle:
+        with (
+            urllib.request.urlopen(request, timeout=60) as response,
+            open(temp_path, "wb") as handle,
+        ):
             while True:
                 chunk = response.read(256 * 1024)
                 if not chunk:
@@ -1014,7 +1150,13 @@ def audio_action_for_item(client: "BilibiliClient", item: VideoItem) -> str:
 
 
 def run_audio_worker(url: str, referer: str, user_agent: str, title: str) -> int:
-    stream = AudioStream(title=title or "当前音频", url=url, referer=referer, user_agent=user_agent, source_kind="worker")
+    stream = AudioStream(
+        title=title or "当前音频",
+        url=url,
+        referer=referer,
+        user_agent=user_agent,
+        source_kind="worker",
+    )
     command = build_audio_player_command(stream)
     if command:
         process = subprocess.Popen(
@@ -1121,7 +1263,12 @@ def item_from_payload(payload: dict[str, Any]) -> VideoItem:
     elif isinstance(owner, str) and owner.strip():
         author = owner.strip()
     else:
-        author = payload.get("author") or payload.get("owner_name") or payload.get("up_name") or "-"
+        author = (
+            payload.get("author")
+            or payload.get("owner_name")
+            or payload.get("up_name")
+            or "-"
+        )
     return VideoItem(
         title=strip_html(payload.get("title", "")),
         author=author,
@@ -1129,17 +1276,28 @@ def item_from_payload(payload: dict[str, Any]) -> VideoItem:
         aid=payload.get("aid"),
         duration=normalize_duration(payload.get("duration")),
         play=parse_count_value(payload.get("play") or stat.get("view") or 0),
-        danmaku=parse_count_value(payload.get("video_review") or payload.get("danmaku") or stat.get("danmaku") or 0),
+        danmaku=parse_count_value(
+            payload.get("video_review")
+            or payload.get("danmaku")
+            or stat.get("danmaku")
+            or 0
+        ),
         like=parse_count_value(payload.get("like") or stat.get("like") or 0),
-        favorite=parse_count_value(payload.get("favorites") or stat.get("favorite") or 0),
+        favorite=parse_count_value(
+            payload.get("favorites") or stat.get("favorite") or 0
+        ),
         pubdate=payload.get("pubdate"),
-        description=compact_whitespace(payload.get("description") or payload.get("desc") or ""),
+        description=compact_whitespace(
+            payload.get("description") or payload.get("desc") or ""
+        ),
         url=build_video_url(payload),
         raw=payload,
     )
 
 
-def item_from_bangumi_payload(payload: dict[str, Any], *, category_label: str) -> VideoItem:
+def item_from_bangumi_payload(
+    payload: dict[str, Any], *, category_label: str
+) -> VideoItem:
     stat = payload.get("stat") or {}
     new_ep = payload.get("new_ep") or {}
     author = compact_whitespace(
@@ -1166,7 +1324,9 @@ def item_from_bangumi_payload(payload: dict[str, Any], *, category_label: str) -
         play=parse_count_value(payload.get("plays") or stat.get("view") or 0),
         danmaku=parse_count_value(payload.get("danmaku") or stat.get("danmaku") or 0),
         like=parse_count_value(payload.get("likes") or stat.get("like") or 0),
-        favorite=parse_count_value(payload.get("favorites") or stat.get("favorite") or 0),
+        favorite=parse_count_value(
+            payload.get("favorites") or stat.get("favorite") or 0
+        ),
         pubdate=payload.get("pub_ts") or payload.get("pubdate"),
         description=compact_whitespace(
             payload.get("evaluate")
@@ -1261,7 +1421,9 @@ class HistoryStore:
                         normalized_keywords.append(normalized)
                 self._data["recent_keywords"] = normalized_keywords[: self.max_items]
             if isinstance(videos, list):
-                self._data["recent_videos"] = [item for item in videos if isinstance(item, dict)][: self.max_items]
+                self._data["recent_videos"] = [
+                    item for item in videos if isinstance(item, dict)
+                ][: self.max_items]
             if isinstance(favorites, list):
                 normalized_favorites: list[dict[str, Any]] = []
                 seen_keys: set[str] = set()
@@ -1275,7 +1437,9 @@ class HistoryStore:
                         continue
                     seen_keys.add(key)
                     normalized_favorites.append(item)
-                self._data["favorite_videos"] = normalized_favorites[: self.max_favorites]
+                self._data["favorite_videos"] = normalized_favorites[
+                    : self.max_favorites
+                ]
         if changed:
             self.save()
 
@@ -1298,7 +1462,11 @@ class HistoryStore:
     def add_video(self, item: VideoItem) -> None:
         payload = item_to_history_payload(item)
         key = video_key_from_payload(payload)
-        videos = [video for video in self._data["recent_videos"] if video_key_from_payload(video) != key]
+        videos = [
+            video
+            for video in self._data["recent_videos"]
+            if video_key_from_payload(video) != key
+        ]
         videos.insert(0, payload)
         self._data["recent_videos"] = videos[: self.max_items]
         self.save()
@@ -1308,7 +1476,11 @@ class HistoryStore:
         key = video_key_from_payload(payload)
         if key is None:
             return False
-        favorites = [video for video in self._data["favorite_videos"] if video_key_from_payload(video) != key]
+        favorites = [
+            video
+            for video in self._data["favorite_videos"]
+            if video_key_from_payload(video) != key
+        ]
         already_exists = len(favorites) != len(self._data["favorite_videos"])
         favorites.insert(0, payload)
         self._data["favorite_videos"] = favorites[: self.max_favorites]
@@ -1319,7 +1491,11 @@ class HistoryStore:
         key = target if isinstance(target, str) else video_key_from_item(target)
         if key is None:
             return False
-        favorites = [video for video in self._data["favorite_videos"] if video_key_from_payload(video) != key]
+        favorites = [
+            video
+            for video in self._data["favorite_videos"]
+            if video_key_from_payload(video) != key
+        ]
         changed = len(favorites) != len(self._data["favorite_videos"])
         if changed:
             self._data["favorite_videos"] = favorites
@@ -1337,30 +1513,50 @@ class HistoryStore:
         key = video_key_from_item(item)
         if key is None:
             return False
-        return any(video_key_from_payload(video) == key for video in self._data["favorite_videos"])
+        return any(
+            video_key_from_payload(video) == key
+            for video in self._data["favorite_videos"]
+        )
 
     def get_recent_keywords(self, limit: int = 10) -> list[str]:
         return list(self._data["recent_keywords"][:limit])
 
     def get_recent_videos(self, limit: int = 20) -> list[VideoItem]:
-        return [item_from_payload(payload) for payload in self._data["recent_videos"][:limit]]
+        return [
+            item_from_payload(payload)
+            for payload in self._data["recent_videos"][:limit]
+        ]
 
     def get_favorite_videos(self, limit: int | None = None) -> list[VideoItem]:
-        payloads = self._data["favorite_videos"] if limit is None else self._data["favorite_videos"][:limit]
+        payloads = (
+            self._data["favorite_videos"]
+            if limit is None
+            else self._data["favorite_videos"][:limit]
+        )
         return [item_from_payload(payload) for payload in payloads]
 
 
 class BilibiliClient:
-    def __init__(self, timeout: int = DEFAULT_TIMEOUT, user_agent: str = DEFAULT_USER_AGENT) -> None:
+    def __init__(
+        self, timeout: int = DEFAULT_TIMEOUT, user_agent: str = DEFAULT_USER_AGENT
+    ) -> None:
         self.timeout = timeout
         self.user_agent = user_agent
         self.cookie_jar = http.cookiejar.CookieJar()
-        self.opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.cookie_jar))
+        self.opener = urllib.request.build_opener(
+            urllib.request.HTTPCookieProcessor(self.cookie_jar)
+        )
         self.comment_wbi_keys: dict[str, tuple[str, str]] = {}
 
-    def _build_headers(self, referer: str, accept: str = "application/json, text/plain, */*") -> dict[str, str]:
+    def _build_headers(
+        self, referer: str, accept: str = "application/json, text/plain, */*"
+    ) -> dict[str, str]:
         parsed_referer = urllib.parse.urlparse(referer)
-        origin = f"{parsed_referer.scheme}://{parsed_referer.netloc}" if parsed_referer.scheme and parsed_referer.netloc else referer
+        origin = (
+            f"{parsed_referer.scheme}://{parsed_referer.netloc}"
+            if parsed_referer.scheme and parsed_referer.netloc
+            else referer
+        )
         return {
             "User-Agent": self.user_agent,
             "Accept": accept,
@@ -1377,16 +1573,27 @@ class BilibiliClient:
         if referer not in warmup_targets:
             warmup_targets.append(referer)
         for target in warmup_targets:
-            request = urllib.request.Request(target, headers=self._build_headers(target, accept="text/html,application/xhtml+xml"))
+            request = urllib.request.Request(
+                target,
+                headers=self._build_headers(
+                    target, accept="text/html,application/xhtml+xml"
+                ),
+            )
             with self._open(request) as response:
                 response.read()
 
-    def _request_text(self, url: str, referer: str, accept: str = "text/html,application/xhtml+xml") -> str:
+    def _request_text(
+        self, url: str, referer: str, accept: str = "text/html,application/xhtml+xml"
+    ) -> str:
         for attempt in range(2):
-            request = urllib.request.Request(url, headers=self._build_headers(referer, accept=accept))
+            request = urllib.request.Request(
+                url, headers=self._build_headers(referer, accept=accept)
+            )
             try:
                 with self._open(request) as response:
-                    return decode_response_body(response.read(), response.headers.get("Content-Encoding"))
+                    return decode_response_body(
+                        response.read(), response.headers.get("Content-Encoding")
+                    )
             except urllib.error.HTTPError as exc:
                 if exc.code == 412 and attempt == 0:
                     self._warmup(referer)
@@ -1421,7 +1628,9 @@ class BilibiliClient:
 
         code = payload.get("code")
         if code != 0:
-            raise BilibiliAPIError(f"Bilibili 接口错误 code={code}: {payload.get('message', 'unknown')}")
+            raise BilibiliAPIError(
+                f"Bilibili 接口错误 code={code}: {payload.get('message', 'unknown')}"
+            )
         data = payload.get("data")
         if data is None:
             data = payload.get("result")
@@ -1430,7 +1639,9 @@ class BilibiliClient:
     def _video_page_state(self, bvid: str) -> dict[str, Any]:
         page_url = build_watch_url("bvid", bvid)
         html = self._request_text(page_url, "https://www.bilibili.com/")
-        match = INITIAL_STATE_PATTERN.search(html) or INITIAL_STATE_FALLBACK_PATTERN.search(html)
+        match = INITIAL_STATE_PATTERN.search(
+            html
+        ) or INITIAL_STATE_FALLBACK_PATTERN.search(html)
         if not match:
             raise BilibiliAPIError("无法解析视频页状态")
         try:
@@ -1448,7 +1659,9 @@ class BilibiliClient:
         except json.JSONDecodeError as exc:
             raise BilibiliAPIError("视频播放信息不是合法 JSON") from exc
 
-    def _comment_wbi_script_keys(self, bvid: str, force_refresh: bool = False) -> tuple[str, str]:
+    def _comment_wbi_script_keys(
+        self, bvid: str, force_refresh: bool = False
+    ) -> tuple[str, str]:
         state = self._video_page_state(bvid)
         abtest = state.get("abtest") or {}
         comment_hash = abtest.get("comment_version_hash")
@@ -1477,8 +1690,12 @@ class BilibiliClient:
             return (default_wbi_key["wbiImgKey"], default_wbi_key["wbiSubKey"])
         raise BilibiliAPIError("无法解析评论接口签名参数")
 
-    def _comments_via_wbi(self, oid: int, bvid: str, referer: str, force_refresh: bool = False) -> dict[str, Any]:
-        img_key, sub_key = self._comment_wbi_script_keys(bvid, force_refresh=force_refresh)
+    def _comments_via_wbi(
+        self, oid: int, bvid: str, referer: str, force_refresh: bool = False
+    ) -> dict[str, Any]:
+        img_key, sub_key = self._comment_wbi_script_keys(
+            bvid, force_refresh=force_refresh
+        )
         params = sign_wbi_params(
             {
                 "oid": oid,
@@ -1519,7 +1736,11 @@ class BilibiliClient:
             },
             "https://www.bilibili.com/",
         )
-        return [item_from_payload(item) for item in data.get("item", []) if item.get("goto") == "av"]
+        return [
+            item_from_payload(item)
+            for item in data.get("item", [])
+            if item.get("goto") == "av"
+        ]
 
     def precious(self, page: int = 1, page_size: int = 10) -> list[VideoItem]:
         data = self._request_json(
@@ -1531,7 +1752,9 @@ class BilibiliClient:
         start = max(0, (page - 1) * page_size)
         return [item_from_payload(item) for item in items[start : start + page_size]]
 
-    def region_ranking(self, rid: int, day: int = 3, page: int = 1, page_size: int = 10) -> list[VideoItem]:
+    def region_ranking(
+        self, rid: int, day: int = 3, page: int = 1, page_size: int = 10
+    ) -> list[VideoItem]:
         data = self._request_json(
             "https://api.bilibili.com/x/web-interface/ranking/region",
             {"rid": rid, "day": day, "original": 0},
@@ -1554,7 +1777,12 @@ class BilibiliClient:
         if index:
             data = self._request_json(
                 "https://api.bilibili.com/pgc/season/index/result",
-                {"season_type": season_type, "page": page, "pagesize": page_size, "type": 1},
+                {
+                    "season_type": season_type,
+                    "page": page,
+                    "pagesize": page_size,
+                    "type": 1,
+                },
                 "https://www.bilibili.com/anime/index/",
             )
             raw_items = list(data.get("list") or [])
@@ -1565,11 +1793,17 @@ class BilibiliClient:
                 "https://www.bilibili.com/anime/timeline/",
             )
             candidates: list[dict[str, Any]] = []
-            candidates.extend(item for item in data.get("latest") or [] if isinstance(item, dict))
+            candidates.extend(
+                item for item in data.get("latest") or [] if isinstance(item, dict)
+            )
             for timeline_entry in data.get("timeline") or []:
                 if not isinstance(timeline_entry, dict):
                     continue
-                for item in timeline_entry.get("episodes") or timeline_entry.get("seasons") or []:
+                for item in (
+                    timeline_entry.get("episodes")
+                    or timeline_entry.get("seasons")
+                    or []
+                ):
                     if isinstance(item, dict):
                         candidates.append(item)
 
@@ -1584,18 +1818,29 @@ class BilibiliClient:
             start = max(0, (page - 1) * page_size)
             raw_items = raw_items[start : start + page_size]
 
-        items = [item_from_bangumi_payload(item, category_label=str(meta["label"])) for item in raw_items]
+        items = [
+            item_from_bangumi_payload(item, category_label=str(meta["label"]))
+            for item in raw_items
+        ]
         if area:
             keyword = area.strip()
             filtered = [
-                item for item in items if keyword in item.title or keyword in item.author or keyword in item.description
+                item
+                for item in items
+                if keyword in item.title
+                or keyword in item.author
+                or keyword in item.description
             ]
             if filtered:
                 items = filtered
         return items[:page_size]
 
-    def search(self, keyword: str, page: int = 1, page_size: int = 10) -> list[VideoItem]:
-        search_referer = f"https://search.bilibili.com/all?keyword={urllib.parse.quote(keyword)}"
+    def search(
+        self, keyword: str, page: int = 1, page_size: int = 10
+    ) -> list[VideoItem]:
+        search_referer = (
+            f"https://search.bilibili.com/all?keyword={urllib.parse.quote(keyword)}"
+        )
         data = self._request_json(
             "https://api.bilibili.com/x/web-interface/search/type",
             {
@@ -1605,7 +1850,11 @@ class BilibiliClient:
             },
             search_referer,
         )
-        items = [item_from_payload(item) for item in data.get("result", []) if item.get("type") == "video"]
+        items = [
+            item_from_payload(item)
+            for item in data.get("result", [])
+            if item.get("type") == "video"
+        ]
         return items[:page_size]
 
     def video(self, ref: str) -> VideoItem:
@@ -1640,7 +1889,9 @@ class BilibiliClient:
                     user_agent=self.user_agent,
                     title=detail_item.title,
                 )
-            ref = detail_item.bvid or (str(detail_item.aid) if detail_item.aid is not None else "")
+            ref = detail_item.bvid or (
+                str(detail_item.aid) if detail_item.aid is not None else ""
+            )
             if not ref:
                 raise BilibiliAPIError("当前视频缺少 BV 号，无法解析音频流")
             detail_item = self.video(ref)
@@ -1673,15 +1924,27 @@ class BilibiliClient:
             "https://www.bilibili.com/",
         )
         trending = (data.get("trending") or {}).get("list", [])
-        return [compact_whitespace(item.get("show_name") or item.get("keyword") or "") for item in trending if compact_whitespace(item.get("show_name") or item.get("keyword") or "")]
+        return [
+            compact_whitespace(item.get("show_name") or item.get("keyword") or "")
+            for item in trending
+            if compact_whitespace(item.get("show_name") or item.get("keyword") or "")
+        ]
 
-    def comments(self, oid: int, page_size: int = 4, bvid: str | None = None) -> list[CommentItem]:
-        referer = f"https://www.bilibili.com/video/{bvid}" if bvid else f"https://www.bilibili.com/video/av{oid}"
+    def comments(
+        self, oid: int, page_size: int = 4, bvid: str | None = None
+    ) -> list[CommentItem]:
+        referer = (
+            f"https://www.bilibili.com/video/{bvid}"
+            if bvid
+            else f"https://www.bilibili.com/video/av{oid}"
+        )
         try:
             if bvid:
                 for attempt in range(2):
                     try:
-                        data = self._comments_via_wbi(oid, bvid, referer, force_refresh=attempt > 0)
+                        data = self._comments_via_wbi(
+                            oid, bvid, referer, force_refresh=attempt > 0
+                        )
                         break
                     except BilibiliAPIError as exc:
                         if attempt == 0 and "访问权限不足" in str(exc):
@@ -1695,7 +1958,9 @@ class BilibiliClient:
                 )
         except BilibiliAPIError as exc:
             if "访问权限不足" in str(exc) or "HTTP 412" in str(exc):
-                raise BilibiliAPIError("评论接口受限，请稍后重试或按 o 在浏览器中查看") from exc
+                raise BilibiliAPIError(
+                    "评论接口受限，请稍后重试或按 o 在浏览器中查看"
+                ) from exc
             raise
         return comments_from_thread_payload(data, page_size)
 
@@ -1710,7 +1975,9 @@ class BilibiliCLI(cmd.Cmd):
     )
     prompt = "bili> "
 
-    def __init__(self, client: BilibiliClient, history_store: HistoryStore | None = None) -> None:
+    def __init__(
+        self, client: BilibiliClient, history_store: HistoryStore | None = None
+    ) -> None:
         super().__init__()
         self.client = client
         self.history_store = history_store or HistoryStore()
@@ -1749,12 +2016,16 @@ class BilibiliCLI(cmd.Cmd):
             args = build_rank_argument_parser().parse_args(shlex.split(arg))
             rid, label = resolve_region_rid(args.region, args.rid)
         except SystemExit:
-            print("用法: rank [分区名] [--rid RID] [--day 1|3|7] [--page N] [--limit N]")
+            print(
+                "用法: rank [分区名] [--rid RID] [--day 1|3|7] [--page N] [--limit N]"
+            )
             return
         except ValueError as exc:
             print(str(exc))
             return
-        items = self.client.region_ranking(rid=rid, day=args.day, page=args.page, page_size=args.limit)
+        items = self.client.region_ranking(
+            rid=rid, day=args.day, page=args.page, page_size=args.limit
+        )
         self.last_items = items
         print_video_list(items, f"{label} 排行榜 | 第 {args.page} 页")
 
@@ -1776,7 +2047,12 @@ class BilibiliCLI(cmd.Cmd):
             page_size=args.limit,
         )
         self.last_items = items
-        print_video_list(items, build_bangumi_title(str(meta["label"]), index=args.index, page=args.page, area=args.area))
+        print_video_list(
+            items,
+            build_bangumi_title(
+                str(meta["label"]), index=args.index, page=args.page, area=args.area
+            ),
+        )
 
     def do_video(self, arg: str) -> None:
         target = arg.strip()
@@ -1828,7 +2104,9 @@ class BilibiliCLI(cmd.Cmd):
             self.history_store.remove_favorite(item)
             print(f"已移出收藏: {item.title}")
             return
-        print("用法: favorites [open <序号|BV号|av号|URL> | remove <序号|BV号|av号|URL>]")
+        print(
+            "用法: favorites [open <序号|BV号|av号|URL> | remove <序号|BV号|av号|URL>]"
+        )
 
     def do_comments(self, arg: str) -> None:
         if not arg.strip():
@@ -1952,7 +2230,9 @@ def print_video_list(items: list[VideoItem], title: str) -> None:
         print(f"{index:>2}. {shorten(item.title, 72)}")
         print(f"    {meta}")
         print(f"    {item_ref_label(item)} | {item.url}")
-    print("\n提示: 可用 `video 1` 查看详情，`audio 1` 播放音频，`favorite 1` 加入收藏，或 `open 1` 在浏览器中打开。")
+    print(
+        "\n提示: 可用 `video 1` 查看详情，`audio 1` 播放音频，`favorite 1` 加入收藏，或 `open 1` 在浏览器中打开。"
+    )
 
 
 def print_video_detail(item: VideoItem) -> None:
@@ -2002,7 +2282,9 @@ def print_favorites(history_store: HistoryStore) -> None:
     for index, item in enumerate(favorites, start=1):
         print(f"{index:>2}. {shorten(item.title, 72)}")
         print(f"    {item.author} | {item.bvid or item.aid} | {item.url}")
-    print("\n提示: 可用 `audio 1` 播放音频，`favorites open 1` 直接打开，或 `favorites remove 1` 从收藏夹移除。")
+    print(
+        "\n提示: 可用 `audio 1` 播放音频，`favorites open 1` 直接打开，或 `favorites remove 1` 从收藏夹移除。"
+    )
 
 
 def print_comments(item: VideoItem, comments: list[CommentItem]) -> None:
@@ -2013,13 +2295,26 @@ def print_comments(item: VideoItem, comments: list[CommentItem]) -> None:
         print("没有可显示的评论。")
         return
     for index, comment in enumerate(comments, start=1):
-        print(f"{index:>2}. {comment.author} | {human_count(comment.like)} 赞 | {format_timestamp(comment.ctime)}")
-        print(textwrap.fill(comment.message or "暂无评论内容", width=88, initial_indent="    ", subsequent_indent="    "))
+        print(
+            f"{index:>2}. {comment.author} | {human_count(comment.like)} 赞 | {format_timestamp(comment.ctime)}"
+        )
+        print(
+            textwrap.fill(
+                comment.message or "暂无评论内容",
+                width=88,
+                initial_indent="    ",
+                subsequent_indent="    ",
+            )
+        )
 
 
 def build_detail_lines(item: VideoItem, width: int) -> list[str]:
     title_lines = wrap_display(item.title, width=max(20, width))
-    description_lines = wrap_display(item.description, width=max(20, width)) if item.description else ["无简介"]
+    description_lines = (
+        wrap_display(item.description, width=max(20, width))
+        if item.description
+        else ["无简介"]
+    )
     return [
         *title_lines,
         "",
@@ -2055,7 +2350,9 @@ def comments_from_payload(payload: list[dict[str, Any]]) -> list[CommentItem]:
     return comments
 
 
-def comments_from_thread_payload(payload: dict[str, Any], limit: int) -> list[CommentItem]:
+def comments_from_thread_payload(
+    payload: dict[str, Any], limit: int
+) -> list[CommentItem]:
     merged: list[dict[str, Any]] = []
     seen: set[str] = set()
     for field in ("top_replies", "replies"):
@@ -2071,7 +2368,9 @@ def comments_from_thread_payload(payload: dict[str, Any], limit: int) -> list[Co
 
 
 class BilibiliTUI:
-    def __init__(self, client: BilibiliClient, history_store: HistoryStore, limit: int = 5) -> None:
+    def __init__(
+        self, client: BilibiliClient, history_store: HistoryStore, limit: int = 5
+    ) -> None:
         self.client = client
         self.history_store = history_store
         self.limit = limit
@@ -2118,22 +2417,34 @@ class BilibiliTUI:
     def attr_header(self) -> int:
         import curses
 
-        return curses.color_pair(1) | curses.A_BOLD if self.use_colors else curses.A_REVERSE
+        return (
+            curses.color_pair(1) | curses.A_BOLD
+            if self.use_colors
+            else curses.A_REVERSE
+        )
 
     def attr_accent(self) -> int:
         import curses
 
-        return curses.color_pair(2) | curses.A_BOLD if self.use_colors else curses.A_BOLD
+        return (
+            curses.color_pair(2) | curses.A_BOLD if self.use_colors else curses.A_BOLD
+        )
 
     def attr_title(self) -> int:
         import curses
 
-        return curses.color_pair(3) | curses.A_BOLD if self.use_colors else curses.A_BOLD
+        return (
+            curses.color_pair(3) | curses.A_BOLD if self.use_colors else curses.A_BOLD
+        )
 
     def attr_selected(self) -> int:
         import curses
 
-        return curses.color_pair(4) | curses.A_BOLD if self.use_colors else curses.A_REVERSE
+        return (
+            curses.color_pair(4) | curses.A_BOLD
+            if self.use_colors
+            else curses.A_REVERSE
+        )
 
     def attr_muted(self) -> int:
         import curses
@@ -2252,13 +2563,23 @@ class BilibiliTUI:
         comments = self.current_comments()
         comment_error = self.current_comment_error()
         if comment_error and not comments:
-            lines.extend(["", f"评论加载失败: {comment_error}", "提示: 按 o 在浏览器中查看完整评论"])
+            lines.extend(
+                [
+                    "",
+                    f"评论加载失败: {comment_error}",
+                    "提示: 按 o 在浏览器中查看完整评论",
+                ]
+            )
         if comments:
             lines.extend(["", "💬 热评:"])
             for index, comment in enumerate(comments, start=1):
                 header = f"{index}. 👤 {comment.author} · 👍 {human_count(comment.like)} · 📅 {format_timestamp(comment.ctime)}"
                 lines.append(header)
-                lines.extend(wrap_display(comment.message or "暂无评论内容", width=max(20, width)))
+                lines.extend(
+                    wrap_display(
+                        comment.message or "暂无评论内容", width=max(20, width)
+                    )
+                )
                 lines.append("")
         return lines
 
@@ -2304,7 +2625,9 @@ class BilibiliTUI:
         if aid is None:
             return
         try:
-            self.comment_cache[key] = self.client.comments(aid, page_size=4, bvid=referer_bvid)
+            self.comment_cache[key] = self.client.comments(
+                aid, page_size=4, bvid=referer_bvid
+            )
             self.comment_loaded.add(key)
             self.comment_errors.pop(key, None)
         except BilibiliAPIError as exc:
@@ -2316,7 +2639,9 @@ class BilibiliTUI:
         self.detail_mode = False
         self.detail_scroll = 0
         if self.mode == "search" and self.keyword:
-            self.items = self.client.search(self.keyword, page=self.page, page_size=self.limit)
+            self.items = self.client.search(
+                self.keyword, page=self.page, page_size=self.limit
+            )
         elif self.mode == "history":
             self.items = self.history_store.get_recent_videos(self.limit)
         elif self.mode == "favorites":
@@ -2340,12 +2665,21 @@ class BilibiliTUI:
                     page_size=self.limit,
                 )
             else:
-                self.items = self.client.region_ranking(channel["rid"], page=self.page, page_size=self.limit)
+                self.items = self.client.region_ranking(
+                    channel["rid"], page=self.page, page_size=self.limit
+                )
         self.clamp_selection()
         self.ensure_comments_for_selected(force=force_comments)
         self.status = f"已加载 {len(self.items)} 条结果"
 
-    def switch_mode(self, mode: str, *, page: int | None = None, keyword: str | None = None, push_current: bool = True) -> None:
+    def switch_mode(
+        self,
+        mode: str,
+        *,
+        page: int | None = None,
+        keyword: str | None = None,
+        push_current: bool = True,
+    ) -> None:
         if push_current:
             self.push_list_state()
         self.mode = mode
@@ -2388,7 +2722,11 @@ class BilibiliTUI:
             self.status = f"评论加载失败: {comment_error}"
             return
         unavailable_message = self.current_comment_unavailable_message()
-        if unavailable_message and not self.current_comments_loaded() and not self.current_comments():
+        if (
+            unavailable_message
+            and not self.current_comments_loaded()
+            and not self.current_comments()
+        ):
             self.status = unavailable_message
             return
         comment_count = len(self.current_comments())
@@ -2518,11 +2856,21 @@ class BilibiliTUI:
             attr = self.attr_title() if index == 1 else curses.A_NORMAL
             win.addnstr(index, 2, line, box_width - 4, attr)
 
-    def draw_panel_title(self, stdscr: Any, y: int, x: int, text: str, max_width: int) -> None:
+    def draw_panel_title(
+        self, stdscr: Any, y: int, x: int, text: str, max_width: int
+    ) -> None:
         label = f" {text} "
         stdscr.addnstr(y, x, label, max_width, self.attr_accent())
 
-    def draw_box(self, stdscr: Any, y: int, x: int, height: int, width: int, label: str | None = None) -> None:
+    def draw_box(
+        self,
+        stdscr: Any,
+        y: int,
+        x: int,
+        height: int,
+        width: int,
+        label: str | None = None,
+    ) -> None:
         import curses
 
         if height <= 1 or width <= 1:
@@ -2530,7 +2878,7 @@ class BilibiliTUI:
 
         top = "╭" + "─" * (width - 2) + "╮"
         bottom = "╰" + "─" * (width - 2) + "╯"
-        
+
         try:
             stdscr.addnstr(y, x, top, width, self.attr_muted())
             for i in range(1, height - 1):
@@ -2551,15 +2899,29 @@ class BilibiliTUI:
         banner_height = 6
         self.draw_box(stdscr, y, 0, banner_height, width, "发现")
         headline = "哔哩哔哩终端首页"
-        stdscr.addnstr(y + 1, centered_x(width, headline, 2), headline, width - 4, self.attr_title())
+        stdscr.addnstr(
+            y + 1,
+            centered_x(width, headline, 2),
+            headline,
+            width - 4,
+            self.attr_title(),
+        )
         if self.mode == "search" and self.keyword:
             query = truncate_display(self.keyword, max(12, width - 24))
             search_text = f" 搜索中：{query} "
         else:
             default_word = self.default_search_keyword or "按 / 开始搜索"
-            search_text = f" 默认搜索：{truncate_display(default_word, max(12, width - 24))} "
+            search_text = (
+                f" 默认搜索：{truncate_display(default_word, max(12, width - 24))} "
+            )
         search_x = centered_x(width, search_text, 2)
-        stdscr.addnstr(y + 2, search_x, search_text, max(1, width - search_x - 2), self.attr_selected())
+        stdscr.addnstr(
+            y + 2,
+            search_x,
+            search_text,
+            max(1, width - search_x - 2),
+            self.attr_selected(),
+        )
         if self.mode == "hot":
             channel_label = self.active_channel()["label"]
         elif self.mode == "favorites":
@@ -2569,20 +2931,39 @@ class BilibiliTUI:
         else:
             channel_label = "搜索"
         section_line = f"当前分区 · {channel_label}"
-        stdscr.addnstr(y + 3, centered_x(width, section_line, 2), section_line, width - 4, self.attr_accent())
-        hot_words = " · ".join(self.trending_keywords_cache[:3]) if self.trending_keywords_cache else "热点内容 · 分区导航 · 精选视频"
+        stdscr.addnstr(
+            y + 3,
+            centered_x(width, section_line, 2),
+            section_line,
+            width - 4,
+            self.attr_accent(),
+        )
+        hot_words = (
+            " · ".join(self.trending_keywords_cache[:3])
+            if self.trending_keywords_cache
+            else "热点内容 · 分区导航 · 精选视频"
+        )
         subline = f"热搜：{truncate_display(hot_words, max(16, width - 12))}"
-        stdscr.addnstr(y + 4, centered_x(width, subline, 2), subline, width - 4, self.attr_muted())
+        stdscr.addnstr(
+            y + 4, centered_x(width, subline, 2), subline, width - 4, self.attr_muted()
+        )
         return banner_height
 
     def draw_category_row(self, stdscr: Any, y: int, width: int) -> int:
-        chips = [f"[{index + 1}.{channel['label']}]" for index, channel in enumerate(self.channels)]
+        chips = [
+            f"[{index + 1}.{channel['label']}]"
+            for index, channel in enumerate(self.channels)
+        ]
         x = 0
         for index, chip in enumerate(chips):
             chip_width = display_width(chip)
             if x + chip_width >= width - 1:
                 break
-            attr = self.attr_accent() if index == self.channel_index and self.mode == "hot" else self.attr_muted()
+            attr = (
+                self.attr_accent()
+                if index == self.channel_index and self.mode == "hot"
+                else self.attr_muted()
+            )
             stdscr.addnstr(y, x, chip, chip_width, attr)
             x += chip_width + 1
         return 1
@@ -2590,17 +2971,44 @@ class BilibiliTUI:
     def selected_card_item(self) -> VideoItem | None:
         return self.selected_item
 
-    def draw_featured_card(self, stdscr: Any, y: int, x: int, height: int, width: int, item: VideoItem | None, selected: bool) -> None:
+    def draw_featured_card(
+        self,
+        stdscr: Any,
+        y: int,
+        x: int,
+        height: int,
+        width: int,
+        item: VideoItem | None,
+        selected: bool,
+    ) -> None:
         self.draw_box(stdscr, y, x, height, width, "今日精选")
         if item is None:
-            stdscr.addnstr(y + 2, x + 2, "没有可展示的内容", width - 4, self.attr_muted())
+            stdscr.addnstr(
+                y + 2, x + 2, "没有可展示的内容", width - 4, self.attr_muted()
+            )
             return
 
-        title_text = f"★ {item.title}" if self.history_store.is_favorite(item) else item.title
+        title_text = (
+            f"★ {item.title}" if self.history_store.is_favorite(item) else item.title
+        )
         if height < 9:
-            stdscr.addnstr(y + 1, x + 2, truncate_display(title_text, width - 4), width - 4, self.attr_title())
-            stdscr.addnstr(y + 2, x + 2, truncate_display(item.author, width - 4), width - 4, self.attr_muted())
-            stdscr.addnstr(y + height - 2, x + 2, "Enter 查看详情", width - 4, self.attr_muted())
+            stdscr.addnstr(
+                y + 1,
+                x + 2,
+                truncate_display(title_text, width - 4),
+                width - 4,
+                self.attr_title(),
+            )
+            stdscr.addnstr(
+                y + 2,
+                x + 2,
+                truncate_display(item.author, width - 4),
+                width - 4,
+                self.attr_muted(),
+            )
+            stdscr.addnstr(
+                y + height - 2, x + 2, "Enter 查看详情", width - 4, self.attr_muted()
+            )
             return
 
         title_attr = self.attr_selected() if selected else self.attr_title()
@@ -2614,8 +3022,13 @@ class BilibiliTUI:
 
         meta_lines = [
             truncate_display(item.author, width - 4),
-            truncate_display(f"{human_count(item.play)} 播放   {human_count(item.danmaku)} 弹幕", width - 4),
-            truncate_display(f"{item.duration}   {format_timestamp(item.pubdate)}", width - 4),
+            truncate_display(
+                f"{human_count(item.play)} 播放   {human_count(item.danmaku)} 弹幕",
+                width - 4,
+            ),
+            truncate_display(
+                f"{item.duration}   {format_timestamp(item.pubdate)}", width - 4
+            ),
             truncate_display(f"稿件号 {item.bvid or item.aid}", width - 4),
         ]
         for meta_line in meta_lines:
@@ -2623,10 +3036,15 @@ class BilibiliTUI:
             content_y += 1
 
         sections: list[tuple[str, list[str]]] = []
-        desc_lines = wrap_display(item.description or "暂无简介", width=max(12, width - 4))
+        desc_lines = wrap_display(
+            item.description or "暂无简介", width=max(12, width - 4)
+        )
         sections.append(("简介", desc_lines))
 
-        hot_lines = [f"{index + 1}. {word}" for index, word in enumerate(self.trending_keywords_cache[:6])]
+        hot_lines = [
+            f"{index + 1}. {word}"
+            for index, word in enumerate(self.trending_keywords_cache[:6])
+        ]
         if hot_lines:
             sections.append(("热搜速览", hot_lines))
 
@@ -2642,7 +3060,18 @@ class BilibiliTUI:
         if recent_videos:
             sections.append(("最近浏览", recent_videos[:3]))
 
-        sections.append(("快捷操作", ["Enter 查看详情", "a 播放/暂停音频", "x 停止音频", "f 收藏当前视频", "m 打开收藏夹"]))
+        sections.append(
+            (
+                "快捷操作",
+                [
+                    "Enter 查看详情",
+                    "a 播放/暂停音频",
+                    "x 停止音频",
+                    "f 收藏当前视频",
+                    "m 打开收藏夹",
+                ],
+            )
+        )
 
         footer_y = y + height - 2
         available_body_lines = max(0, footer_y - content_y)
@@ -2658,25 +3087,59 @@ class BilibiliTUI:
             for line in lines:
                 if available_body_lines <= 0:
                     break
-                stdscr.addnstr(body_cursor, x + 2, truncate_display(line, width - 4), width - 4)
+                stdscr.addnstr(
+                    body_cursor, x + 2, truncate_display(line, width - 4), width - 4
+                )
                 body_cursor += 1
                 available_body_lines -= 1
-        stdscr.addnstr(y + height - 2, x + 2, "Enter 查看详情", width - 4, self.attr_muted())
+        stdscr.addnstr(
+            y + height - 2, x + 2, "Enter 查看详情", width - 4, self.attr_muted()
+        )
 
-    def draw_grid_card(self, stdscr: Any, y: int, x: int, height: int, width: int, index: int, item: VideoItem, selected: bool) -> None:
+    def draw_grid_card(
+        self,
+        stdscr: Any,
+        y: int,
+        x: int,
+        height: int,
+        width: int,
+        index: int,
+        item: VideoItem,
+        selected: bool,
+    ) -> None:
         label = f"{index + 1:02d}"
         self.draw_box(stdscr, y, x, height, width, label)
         title_attr = self.attr_selected() if selected else self.attr_title()
-        title = f"★ {item.title}" if self.history_store.is_favorite(item) else item.title
-        stdscr.addnstr(y + 1, x + 2, truncate_display(title, width - 4), width - 4, title_attr)
-        stdscr.addnstr(y + 2, x + 2, truncate_display(item.author, width - 4), width - 4, self.attr_muted())
+        title = (
+            f"★ {item.title}" if self.history_store.is_favorite(item) else item.title
+        )
+        stdscr.addnstr(
+            y + 1, x + 2, truncate_display(title, width - 4), width - 4, title_attr
+        )
+        stdscr.addnstr(
+            y + 2,
+            x + 2,
+            truncate_display(item.author, width - 4),
+            width - 4,
+            self.attr_muted(),
+        )
         if height >= 5:
             metrics = f"▶ {human_count(item.play)}  🕒 {item.duration}"
-            stdscr.addnstr(y + 3, x + 2, truncate_display(metrics, width - 4), width - 4, self.attr_muted())
+            stdscr.addnstr(
+                y + 3,
+                x + 2,
+                truncate_display(metrics, width - 4),
+                width - 4,
+                self.attr_muted(),
+            )
         if selected and height >= 5:
-            stdscr.addnstr(y + height - 2, x + 2, "当前选中", width - 4, self.attr_accent())
+            stdscr.addnstr(
+                y + height - 2, x + 2, "当前选中", width - 4, self.attr_accent()
+            )
 
-    def draw_comments_panel(self, stdscr: Any, y: int, x: int, height: int, width: int) -> None:
+    def draw_comments_panel(
+        self, stdscr: Any, y: int, x: int, height: int, width: int
+    ) -> None:
         panel_label = "评论预览" if self.mode == "favorites" else "热评预览"
         self.draw_box(stdscr, y, x, height, width, panel_label)
         if height < 4:
@@ -2685,26 +3148,58 @@ class BilibiliTUI:
         comment_error = self.current_comment_error()
         if comment_error and not comments:
             lines = [
-                *wrap_display(f"评论加载失败：{comment_error}", width=max(12, width - 4)),
+                *wrap_display(
+                    f"评论加载失败：{comment_error}", width=max(12, width - 4)
+                ),
                 "按 o 在浏览器查看完整评论",
                 "按 c 重试，按 r 刷新页面",
             ]
             for index, line in enumerate(lines[: height - 2], start=1):
                 attr = self.attr_accent() if index == 1 else self.attr_muted()
-                stdscr.addnstr(y + index, x + 2, truncate_display(line, width - 4), width - 4, attr)
+                stdscr.addnstr(
+                    y + index, x + 2, truncate_display(line, width - 4), width - 4, attr
+                )
             return
         if not comments:
             if self.current_comments_loaded():
-                stdscr.addnstr(y + 1, x + 2, "当前视频暂无可显示热评", width - 4, self.attr_muted())
-                stdscr.addnstr(y + 2, x + 2, "按 r 刷新页面，按 o 浏览器查看", width - 4, self.attr_muted())
+                stdscr.addnstr(
+                    y + 1, x + 2, "当前视频暂无可显示热评", width - 4, self.attr_muted()
+                )
+                stdscr.addnstr(
+                    y + 2,
+                    x + 2,
+                    "按 r 刷新页面，按 o 浏览器查看",
+                    width - 4,
+                    self.attr_muted(),
+                )
             else:
                 unavailable_message = self.current_comment_unavailable_message()
                 if unavailable_message:
-                    stdscr.addnstr(y + 1, x + 2, truncate_display(unavailable_message, width - 4), width - 4, self.attr_muted())
-                    stdscr.addnstr(y + 2, x + 2, "按 o 浏览器查看，按 r 刷新页面", width - 4, self.attr_muted())
+                    stdscr.addnstr(
+                        y + 1,
+                        x + 2,
+                        truncate_display(unavailable_message, width - 4),
+                        width - 4,
+                        self.attr_muted(),
+                    )
+                    stdscr.addnstr(
+                        y + 2,
+                        x + 2,
+                        "按 o 浏览器查看，按 r 刷新页面",
+                        width - 4,
+                        self.attr_muted(),
+                    )
                 else:
-                    stdscr.addnstr(y + 1, x + 2, "按 c 加载当前视频评论", width - 4, self.attr_muted())
-                    stdscr.addnstr(y + 2, x + 2, "r 刷新当前视图", width - 4, self.attr_muted())
+                    stdscr.addnstr(
+                        y + 1,
+                        x + 2,
+                        "按 c 加载当前视频评论",
+                        width - 4,
+                        self.attr_muted(),
+                    )
+                    stdscr.addnstr(
+                        y + 2, x + 2, "r 刷新当前视图", width - 4, self.attr_muted()
+                    )
             return
 
         cursor = y + 1
@@ -2716,12 +3211,20 @@ class BilibiliTUI:
                 f"{index}. {comment.author} · {human_count(comment.like)} 赞 · {format_timestamp(comment.ctime)}",
                 width - 4,
             )
-            stdscr.addnstr(cursor, x + 2, header, width - 4, self.attr_accent() if index == 1 else self.attr_muted())
+            stdscr.addnstr(
+                cursor,
+                x + 2,
+                header,
+                width - 4,
+                self.attr_accent() if index == 1 else self.attr_muted(),
+            )
             cursor += 1
             available -= 1
             if available <= 0:
                 break
-            for line in wrap_display(comment.message or "暂无评论内容", width=max(12, width - 4)):
+            for line in wrap_display(
+                comment.message or "暂无评论内容", width=max(12, width - 4)
+            ):
                 if available <= 0:
                     break
                 stdscr.addnstr(cursor, x + 2, line, width - 4)
@@ -2744,13 +3247,19 @@ class BilibiliTUI:
             return "收藏夹"
         return self.active_channel()["label"]
 
-    def draw_detail_summary(self, stdscr: Any, start_y: int, start_x: int, width: int, height: int) -> None:
+    def draw_detail_summary(
+        self, stdscr: Any, start_y: int, start_x: int, width: int, height: int
+    ) -> None:
         item = self.current_detail_item()
         if item is None:
-            stdscr.addnstr(start_y, start_x, "当前没有选中的视频", width, self.attr_muted())
+            stdscr.addnstr(
+                start_y, start_x, "当前没有选中的视频", width, self.attr_muted()
+            )
             return
 
-        title = f"★ {item.title}" if self.history_store.is_favorite(item) else item.title
+        title = (
+            f"★ {item.title}" if self.history_store.is_favorite(item) else item.title
+        )
         summary_lines = [
             title,
             f"UP主 {item.author}",
@@ -2776,7 +3285,9 @@ class BilibiliTUI:
                 attr = 0
             stdscr.addnstr(start_y + offset, start_x, line, width, attr)
 
-    def draw_favorites_list(self, stdscr: Any, y: int, x: int, height: int, width: int) -> None:
+    def draw_favorites_list(
+        self, stdscr: Any, y: int, x: int, height: int, width: int
+    ) -> None:
         label = f"收藏列表 · {len(self.items)} 条"
         self.draw_box(stdscr, y, x, height, width, label)
         if height < 4:
@@ -2784,7 +3295,13 @@ class BilibiliTUI:
         if not self.items:
             stdscr.addnstr(y + 2, x + 2, "收藏夹还是空的", width - 4, self.attr_muted())
             if height >= 6:
-                stdscr.addnstr(y + 3, x + 2, "看到喜欢的视频时按 f 就能加入收藏。", width - 4, self.attr_muted())
+                stdscr.addnstr(
+                    y + 3,
+                    x + 2,
+                    "看到喜欢的视频时按 f 就能加入收藏。",
+                    width - 4,
+                    self.attr_muted(),
+                )
             return
 
         cursor = y + 1
@@ -2795,22 +3312,46 @@ class BilibiliTUI:
             selected = index == self.selected_index
             prefix = "›" if selected else " "
             title = f"{prefix} {index + 1}. "
-            title += f"★ {item.title}" if self.history_store.is_favorite(item) else item.title
+            title += (
+                f"★ {item.title}"
+                if self.history_store.is_favorite(item)
+                else item.title
+            )
             title_attr = self.attr_selected() if selected else self.attr_title()
-            stdscr.addnstr(cursor, x + 2, truncate_display(title, width - 4), width - 4, title_attr)
+            stdscr.addnstr(
+                cursor, x + 2, truncate_display(title, width - 4), width - 4, title_attr
+            )
             cursor += 1
 
             meta = f"{item.author} · {human_count(item.play)} 播放 · {item.duration}"
-            stdscr.addnstr(cursor, x + 2, truncate_display(meta, width - 4), width - 4, self.attr_muted())
+            stdscr.addnstr(
+                cursor,
+                x + 2,
+                truncate_display(meta, width - 4),
+                width - 4,
+                self.attr_muted(),
+            )
             cursor += 1
 
             if remaining >= 4:
                 ref_line = f"{item.bvid or item.aid} · {format_timestamp(item.pubdate)}"
-                stdscr.addnstr(cursor, x + 2, truncate_display(ref_line, width - 4), width - 4, self.attr_muted())
+                stdscr.addnstr(
+                    cursor,
+                    x + 2,
+                    truncate_display(ref_line, width - 4),
+                    width - 4,
+                    self.attr_muted(),
+                )
                 cursor += 1
 
             if cursor < y + height - 1:
-                stdscr.addnstr(cursor, x + 2, "·" * max(1, min(width - 4, 12)), width - 4, self.attr_muted())
+                stdscr.addnstr(
+                    cursor,
+                    x + 2,
+                    "·" * max(1, min(width - 4, 12)),
+                    width - 4,
+                    self.attr_muted(),
+                )
                 cursor += 1
 
     def draw_favorites_view(self, stdscr: Any, height: int, width: int) -> None:
@@ -2818,7 +3359,9 @@ class BilibiliTUI:
         header_right = f"共 {len(self.items)} 条"
         stdscr.addnstr(0, 0, header, width - 1, self.attr_header())
         right_x = max(0, width - display_width(header_right) - 1)
-        stdscr.addnstr(0, right_x, header_right, width - right_x - 1, self.attr_header())
+        stdscr.addnstr(
+            0, right_x, header_right, width - right_x - 1, self.attr_header()
+        )
 
         selected = self.selected_item
         if selected is None:
@@ -2848,11 +3391,25 @@ class BilibiliTUI:
                 preview_height = content_height
                 comments_height = 0
 
-        self.draw_box(stdscr, content_top, right_x, preview_height, right_width, "视频预览")
-        self.draw_detail_summary(stdscr, content_top + 1, right_x + 2, max(12, right_width - 4), max(1, preview_height - 2))
+        self.draw_box(
+            stdscr, content_top, right_x, preview_height, right_width, "视频预览"
+        )
+        self.draw_detail_summary(
+            stdscr,
+            content_top + 1,
+            right_x + 2,
+            max(12, right_width - 4),
+            max(1, preview_height - 2),
+        )
 
         if comments_height >= 5:
-            self.draw_comments_panel(stdscr, content_top + preview_height, right_x, comments_height, right_width)
+            self.draw_comments_panel(
+                stdscr,
+                content_top + preview_height,
+                right_x,
+                comments_height,
+                right_width,
+            )
 
     def draw_split_view(self, stdscr: Any, height: int, width: int) -> None:
         import curses
@@ -2861,7 +3418,9 @@ class BilibiliTUI:
         header_right = f"{self.mode_token()} · 第 {self.page} 页"
         stdscr.addnstr(0, 0, header, width - 1, self.attr_header())
         right_x = max(0, width - display_width(header_right) - 1)
-        stdscr.addnstr(0, right_x, header_right, width - right_x - 1, self.attr_header())
+        stdscr.addnstr(
+            0, right_x, header_right, width - right_x - 1, self.attr_header()
+        )
         stdscr.addnstr(1, 0, " " * max(1, width - 1), width - 1, self.attr_muted())
         tabs = [
             ("首页流", "hot"),
@@ -2879,7 +3438,9 @@ class BilibiliTUI:
             stdscr.addnstr(1, tab_x, chip, chip_width, attr)
             tab_x += chip_width + 2
         if self.mode == "search" and self.keyword:
-            search_hint = f"当前搜索：{truncate_display(self.keyword, max(10, width // 4))}"
+            search_hint = (
+                f"当前搜索：{truncate_display(self.keyword, max(10, width // 4))}"
+            )
         elif self.mode == "history":
             search_hint = "按 v 查看最近浏览"
         elif self.mode == "favorites":
@@ -2902,7 +3463,15 @@ class BilibiliTUI:
         right_width = width - right_x
 
         featured_item = self.items[0] if self.items else None
-        self.draw_featured_card(stdscr, content_top, 0, content_height, left_width, featured_item, self.selected_index == 0)
+        self.draw_featured_card(
+            stdscr,
+            content_top,
+            0,
+            content_height,
+            left_width,
+            featured_item,
+            self.selected_index == 0,
+        )
 
         grid_items = self.items[1:]
         grid_cols = 2
@@ -2935,7 +3504,9 @@ class BilibiliTUI:
         comments_y = content_top + grid_height
         comments_height = content_height - grid_height
         if comments_height >= 5:
-            self.draw_comments_panel(stdscr, comments_y, right_x, comments_height, right_width)
+            self.draw_comments_panel(
+                stdscr, comments_y, right_x, comments_height, right_width
+            )
 
     def draw_detail_view(self, stdscr: Any, height: int, width: int) -> None:
         import curses
@@ -2944,7 +3515,9 @@ class BilibiliTUI:
         header_right = "j/k 滚动  a 播放/暂停  x 停止  f 收藏  o 浏览器打开  c 刷新评论  Esc 返回  ? 帮助"
         stdscr.addnstr(0, 0, header, width - 1, self.attr_header())
         right_x = max(0, width - display_width(header_right) - 1)
-        stdscr.addnstr(0, right_x, header_right, width - right_x - 1, self.attr_header())
+        stdscr.addnstr(
+            0, right_x, header_right, width - right_x - 1, self.attr_header()
+        )
         stdscr.hline(1, 0, curses.ACS_HLINE, width)
         item = self.current_detail_item()
         title = item.title if item else "没有结果"
@@ -2953,15 +3526,29 @@ class BilibiliTUI:
         content_top = 2
         content_height = height - 5
         self.draw_box(stdscr, content_top, 0, content_height, width, "视频详情")
-        stdscr.addnstr(content_top + 1, 2, truncate_display(title, width - 4), width - 4, self.attr_title())
+        stdscr.addnstr(
+            content_top + 1,
+            2,
+            truncate_display(title, width - 4),
+            width - 4,
+            self.attr_title(),
+        )
         detail_lines = self.get_detail_lines(max(20, width - 4))
         self.clamp_detail_scroll(width - 4, content_height - 4)
-        visible_lines = detail_lines[self.detail_scroll : self.detail_scroll + content_height - 4]
+        visible_lines = detail_lines[
+            self.detail_scroll : self.detail_scroll + content_height - 4
+        ]
         for offset, line in enumerate(visible_lines):
-            attr = self.attr_accent() if "简介:" in line else (self.attr_muted() if ":" in line and offset < 10 else 0)
+            attr = (
+                self.attr_accent()
+                if "简介:" in line
+                else (self.attr_muted() if ":" in line and offset < 10 else 0)
+            )
             stdscr.addnstr(content_top + 2 + offset, 2, line, width - 4, attr)
         footer = f"滚动 {self.detail_scroll + 1}-{self.detail_scroll + len(visible_lines)} / {len(detail_lines)}"
-        stdscr.addnstr(content_top + content_height - 2, 2, footer, width - 4, self.attr_muted())
+        stdscr.addnstr(
+            content_top + content_height - 2, 2, footer, width - 4, self.attr_muted()
+        )
 
     def draw(self, stdscr: Any) -> None:
         import curses
@@ -2986,7 +3573,9 @@ class BilibiliTUI:
         else:
             shortcuts = "Tab 分区  1-9/0 直选  / 搜索  a 播放/暂停  x 停止  f 收藏  m 收藏夹  c 评论  Enter 详情  q 退出"
         stdscr.addnstr(height - 2, 2, shortcuts, width - 4, self.attr_muted())
-        stdscr.addnstr(height - 1, 0, f"状态: {self.status}", width - 1, self.attr_accent())
+        stdscr.addnstr(
+            height - 1, 0, f"状态: {self.status}", width - 1, self.attr_accent()
+        )
         if self.show_help:
             self.draw_help_overlay(stdscr, height, width)
         stdscr.refresh()
@@ -3047,7 +3636,9 @@ class BilibiliTUI:
                         self.selected_index = max(0, self.selected_index - 1)
                 elif key in (curses.KEY_DOWN, ord("j")):
                     if self.items:
-                        self.selected_index = min(len(self.items) - 1, self.selected_index + 1)
+                        self.selected_index = min(
+                            len(self.items) - 1, self.selected_index + 1
+                        )
                 elif key == ord("b"):
                     self.restore_previous_state()
                 elif key in (9,):
@@ -3055,7 +3646,9 @@ class BilibiliTUI:
                 elif key == curses.KEY_BTAB:
                     self.cycle_channel(-1)
                 else:
-                    shortcut_index = channel_shortcut_index_from_key(key, len(self.channels))
+                    shortcut_index = channel_shortcut_index_from_key(
+                        key, len(self.channels)
+                    )
                     if shortcut_index is not None:
                         self.set_channel(shortcut_index)
                     elif key in (ord("g"),):
@@ -3085,14 +3678,20 @@ class BilibiliTUI:
                     elif key == ord("l"):
                         self.rerun_last_search()
                     elif key == ord("d"):
-                        keyword = self.default_search_keyword or self.client.search_default()
+                        keyword = (
+                            self.default_search_keyword or self.client.search_default()
+                        )
                         if keyword:
                             self.history_store.add_keyword(keyword)
                             self.switch_mode("search", keyword=keyword)
                         else:
                             self.status = "当前没有默认搜索词"
                     elif key in (ord("/"), ord("s")):
-                        keyword = self.prompt_input(stdscr, "搜索关键词: ", self.keyword if self.mode == "search" else "")
+                        keyword = self.prompt_input(
+                            stdscr,
+                            "搜索关键词: ",
+                            self.keyword if self.mode == "search" else "",
+                        )
                         if keyword:
                             self.history_store.add_keyword(keyword)
                             self.switch_mode("search", keyword=keyword)
@@ -3154,7 +3753,9 @@ def build_parser() -> argparse.ArgumentParser:
     add_rank_arguments(subparsers.add_parser("rank", help="查看分区排行榜"))
     add_rank_arguments(subparsers.add_parser("ranking", help="rank 的别名"))
 
-    add_bangumi_arguments(subparsers.add_parser("bangumi", help="查看番剧 / 国创 / 影视更新或索引"))
+    add_bangumi_arguments(
+        subparsers.add_parser("bangumi", help="查看番剧 / 国创 / 影视更新或索引")
+    )
 
     precious_parser = subparsers.add_parser("precious", help="查看入站必刷")
     precious_parser.add_argument("-p", "--page", type=int, default=1, help="页码")
@@ -3170,16 +3771,22 @@ def build_parser() -> argparse.ArgumentParser:
     open_parser.add_argument("ref", help="BV号 / av号 / URL")
 
     audio_parser = subparsers.add_parser("audio", help="播放或控制视频音频")
-    audio_parser.add_argument("ref", help="BV号 / av号 / URL / pause / resume / toggle / stop")
+    audio_parser.add_argument(
+        "ref", help="BV号 / av号 / URL / pause / resume / toggle / stop"
+    )
 
     favorite_parser = subparsers.add_parser("favorite", help="将视频加入收藏夹")
     favorite_parser.add_argument("ref", help="BV号 / av号 / URL")
 
     favorites_parser = subparsers.add_parser("favorites", help="查看或操作收藏夹")
     favorites_subparsers = favorites_parser.add_subparsers(dest="favorites_action")
-    favorites_open_parser = favorites_subparsers.add_parser("open", help="浏览器打开收藏夹中的视频")
+    favorites_open_parser = favorites_subparsers.add_parser(
+        "open", help="浏览器打开收藏夹中的视频"
+    )
     favorites_open_parser.add_argument("ref", help="收藏夹序号 / BV号 / av号 / URL")
-    favorites_remove_parser = favorites_subparsers.add_parser("remove", help="从收藏夹移除视频")
+    favorites_remove_parser = favorites_subparsers.add_parser(
+        "remove", help="从收藏夹移除视频"
+    )
     favorites_remove_parser.add_argument("ref", help="收藏夹序号 / BV号 / av号 / URL")
 
     subparsers.add_parser("history", help="查看最近搜索和最近浏览")
@@ -3189,22 +3796,36 @@ def build_parser() -> argparse.ArgumentParser:
     audio_worker_parser = subparsers.add_parser("audio-worker", help=argparse.SUPPRESS)
     audio_worker_parser.add_argument("--url", required=True, help=argparse.SUPPRESS)
     audio_worker_parser.add_argument("--referer", required=True, help=argparse.SUPPRESS)
-    audio_worker_parser.add_argument("--user-agent", required=True, help=argparse.SUPPRESS)
+    audio_worker_parser.add_argument(
+        "--user-agent", required=True, help=argparse.SUPPRESS
+    )
     audio_worker_parser.add_argument("--title", default="", help=argparse.SUPPRESS)
     return parser
 
 
-def run_once(args: argparse.Namespace, client: BilibiliClient, history_store: HistoryStore) -> int:
+def run_once(
+    args: argparse.Namespace, client: BilibiliClient, history_store: HistoryStore
+) -> int:
     if args.command == "hot":
-        print_video_list(client.popular(page=args.page, page_size=args.limit), f"热门视频 第 {args.page} 页")
+        print_video_list(
+            client.popular(page=args.page, page_size=args.limit),
+            f"热门视频 第 {args.page} 页",
+        )
         return 0
     if args.command == "recommend":
-        print_video_list(client.recommend(page=args.page, page_size=args.limit), f"首页推荐 第 {args.page} 页")
+        print_video_list(
+            client.recommend(page=args.page, page_size=args.limit),
+            f"首页推荐 第 {args.page} 页",
+        )
         return 0
     if args.command in {"rank", "ranking"}:
-        rid, label = resolve_region_rid(getattr(args, "region", None), getattr(args, "rid", None))
+        rid, label = resolve_region_rid(
+            getattr(args, "region", None), getattr(args, "rid", None)
+        )
         print_video_list(
-            client.region_ranking(rid=rid, day=args.day, page=args.page, page_size=args.limit),
+            client.region_ranking(
+                rid=rid, day=args.day, page=args.page, page_size=args.limit
+            ),
             f"{label} 排行榜 | 第 {args.page} 页",
         )
         return 0
@@ -3218,14 +3839,21 @@ def run_once(args: argparse.Namespace, client: BilibiliClient, history_store: Hi
                 page=args.page,
                 page_size=args.limit,
             ),
-            build_bangumi_title(str(meta["label"]), index=args.index, page=args.page, area=args.area),
+            build_bangumi_title(
+                str(meta["label"]), index=args.index, page=args.page, area=args.area
+            ),
         )
         return 0
     if args.command == "precious":
-        print_video_list(client.precious(page=args.page, page_size=args.limit), f"入站必刷 第 {args.page} 页")
+        print_video_list(
+            client.precious(page=args.page, page_size=args.limit),
+            f"入站必刷 第 {args.page} 页",
+        )
         return 0
     if args.command == "search":
-        items = client.search(keyword=args.keyword, page=args.page, page_size=args.limit)
+        items = client.search(
+            keyword=args.keyword, page=args.page, page_size=args.limit
+        )
         history_store.add_keyword(args.keyword)
         print_video_list(items, f"搜索结果: {args.keyword} | 第 {args.page} 页")
         return 0
