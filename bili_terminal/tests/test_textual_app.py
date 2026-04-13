@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import pathlib
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -50,7 +52,9 @@ class FakeClient:
     def precious(self, page: int = 1, page_size: int = 10) -> list[cli.VideoItem]:
         return self._page(page, page_size)
 
-    def region_ranking(self, rid: int, day: int = 3, page: int = 1, page_size: int = 10) -> list[cli.VideoItem]:
+    def region_ranking(
+        self, rid: int, day: int = 3, page: int = 1, page_size: int = 10
+    ) -> list[cli.VideoItem]:
         return self._page(page, page_size)
 
     def bangumi(
@@ -64,7 +68,9 @@ class FakeClient:
     ) -> list[cli.VideoItem]:
         return self._page(page, page_size)
 
-    def search(self, keyword: str, page: int = 1, page_size: int = 10) -> list[cli.VideoItem]:
+    def search(
+        self, keyword: str, page: int = 1, page_size: int = 10
+    ) -> list[cli.VideoItem]:
         return [item for item in self._page(page, page_size) if keyword or item.title]
 
     def video(self, ref: str) -> cli.VideoItem:
@@ -73,10 +79,16 @@ class FakeClient:
                 return item
         return self.items[0]
 
-    def comments(self, oid: int, page_size: int = 4, bvid: str | None = None) -> list[cli.CommentItem]:
+    def comments(
+        self, oid: int, page_size: int = 4, bvid: str | None = None
+    ) -> list[cli.CommentItem]:
         return [
-            cli.CommentItem(author="热评用户", message="这是一条测试评论", like=42, ctime=1710000000),
-            cli.CommentItem(author="第二条", message="评论预览正常", like=7, ctime=1710000300),
+            cli.CommentItem(
+                author="热评用户", message="这是一条测试评论", like=42, ctime=1710000000
+            ),
+            cli.CommentItem(
+                author="第二条", message="评论预览正常", like=7, ctime=1710000300
+            ),
         ][:page_size]
 
     def search_default(self) -> str:
@@ -100,7 +112,11 @@ class TextualImportSmokeTests(unittest.TestCase):
     def test_app_registers_legacy_keymap(self) -> None:
         app = textual_app.create_app()
         bindings = getattr(app, "BINDINGS", ())
-        keys = {getattr(binding, "key", None) for binding in bindings if getattr(binding, "key", None)}
+        keys = {
+            getattr(binding, "key", None)
+            for binding in bindings
+            if getattr(binding, "key", None)
+        }
         if not keys:
             self.skipTest("textual bindings unavailable in this interpreter")
         self.assertTrue(
@@ -141,6 +157,21 @@ class TextualImportSmokeTests(unittest.TestCase):
             self.skipTest("textual is installed in this interpreter")
         self.assertEqual(textual_app.main(), 1)
 
+    def test_run_textual_app_reports_repo_root_install_command(self) -> None:
+        repo_root = pathlib.Path(textual_app.__file__).resolve().parents[2]
+        expected = (
+            "Textual 依赖缺失，请先执行 `"
+            f'"{sys.executable}" -m pip install -e "{repo_root}"`。'
+        )
+        with mock.patch.object(
+            textual_app, "TEXTUAL_IMPORT_ERROR", ModuleNotFoundError("textual")
+        ):
+            with mock.patch("sys.stderr") as stderr:
+                result = textual_app.run_textual_app()
+        self.assertEqual(result, 1)
+        written = "".join(call.args[0] for call in stderr.write.call_args_list)
+        self.assertEqual(written, expected + "\n")
+
 
 @unittest.skipUnless(TEXTUAL_AVAILABLE, "textual dependency not installed")
 class TextualBootSmokeTests(unittest.IsolatedAsyncioTestCase):
@@ -154,7 +185,9 @@ class TextualBootSmokeTests(unittest.IsolatedAsyncioTestCase):
         self.history_store.add_favorite(self.client.items[1])
 
     def make_app(self):
-        return textual_app.create_app(client=self.client, history_store=self.history_store)
+        return textual_app.create_app(
+            client=self.client, history_store=self.history_store
+        )
 
     async def test_app_boots_headless(self) -> None:
         app = self.make_app()
@@ -209,31 +242,43 @@ class TextualBootSmokeTests(unittest.IsolatedAsyncioTestCase):
     async def test_theme_config_hot_reload_switches_screen_class(self) -> None:
         config_path = f"{self.temp_dir.name}/config.toml"
         with open(config_path, "w", encoding="utf-8") as handle:
-            handle.write("[ui]\ntheme = \"dark\"\n")
-        with mock.patch.dict(os.environ, {"BILITERMINAL_CONFIG": config_path}, clear=False):
+            handle.write('[ui]\ntheme = "dark"\n')
+        with mock.patch.dict(
+            os.environ, {"BILITERMINAL_CONFIG": config_path}, clear=False
+        ):
             app = self.make_app()
             async with app.run_test(size=(120, 36)) as pilot:
                 await pilot.pause()
                 self.assertFalse(app.screen.has_class("theme-light"))
-                dark_status_background = str(app.screen.query_one("#status-line").styles.background)
+                dark_status_background = str(
+                    app.screen.query_one("#status-line").styles.background
+                )
                 with open(config_path, "w", encoding="utf-8") as handle:
-                    handle.write("[ui]\ntheme = \"light\"\n")
+                    handle.write('[ui]\ntheme = "light"\n')
                 app._poll_config()
                 await pilot.pause()
                 self.assertTrue(app.screen.has_class("theme-light"))
-                light_status_background = str(app.screen.query_one("#status-line").styles.background)
+                light_status_background = str(
+                    app.screen.query_one("#status-line").styles.background
+                )
                 self.assertNotEqual(dark_status_background, light_status_background)
 
     async def test_ctrl_t_toggles_theme_and_persists_config(self) -> None:
         config_path = f"{self.temp_dir.name}/config.toml"
         with open(config_path, "w", encoding="utf-8") as handle:
-            handle.write("[ui]\ntheme = \"dark\"\n")
-        with mock.patch.dict(os.environ, {"BILITERMINAL_CONFIG": config_path}, clear=False):
+            handle.write('[ui]\ntheme = "dark"\n')
+        with mock.patch.dict(
+            os.environ, {"BILITERMINAL_CONFIG": config_path}, clear=False
+        ):
             app = self.make_app()
             async with app.run_test(size=(120, 36)) as pilot:
                 await pilot.pause()
-                dark_status_background = str(app.screen.query_one("#status-line").styles.background)
-                dark_layout_background = str(app.screen.query_one("#browser-layout").styles.background)
+                dark_status_background = str(
+                    app.screen.query_one("#status-line").styles.background
+                )
+                dark_layout_background = str(
+                    app.screen.query_one("#browser-layout").styles.background
+                )
                 self.assertFalse(app.screen.has_class("theme-light"))
                 await pilot.press("ctrl+t")
                 await pilot.pause()
@@ -244,8 +289,12 @@ class TextualBootSmokeTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.press("f2")
                 await pilot.pause()
                 self.assertTrue(app.screen.has_class("theme-light"))
-                light_status_background = str(app.screen.query_one("#status-line").styles.background)
-                light_layout_background = str(app.screen.query_one("#browser-layout").styles.background)
+                light_status_background = str(
+                    app.screen.query_one("#status-line").styles.background
+                )
+                light_layout_background = str(
+                    app.screen.query_one("#browser-layout").styles.background
+                )
                 self.assertNotEqual(dark_status_background, light_status_background)
                 self.assertNotEqual(dark_layout_background, light_layout_background)
                 with open(config_path, "r", encoding="utf-8") as handle:
@@ -254,8 +303,10 @@ class TextualBootSmokeTests(unittest.IsolatedAsyncioTestCase):
     async def test_change_theme_action_opens_custom_theme_picker(self) -> None:
         config_path = f"{self.temp_dir.name}/config.toml"
         with open(config_path, "w", encoding="utf-8") as handle:
-            handle.write("[ui]\ntheme = \"dark\"\n")
-        with mock.patch.dict(os.environ, {"BILITERMINAL_CONFIG": config_path}, clear=False):
+            handle.write('[ui]\ntheme = "dark"\n')
+        with mock.patch.dict(
+            os.environ, {"BILITERMINAL_CONFIG": config_path}, clear=False
+        ):
             app = self.make_app()
             async with app.run_test(size=(120, 36)) as pilot:
                 await pilot.pause()
@@ -274,8 +325,10 @@ class TextualBootSmokeTests(unittest.IsolatedAsyncioTestCase):
     async def test_theme_picker_supports_jk_navigation(self) -> None:
         config_path = f"{self.temp_dir.name}/config.toml"
         with open(config_path, "w", encoding="utf-8") as handle:
-            handle.write("[ui]\ntheme = \"dark\"\n")
-        with mock.patch.dict(os.environ, {"BILITERMINAL_CONFIG": config_path}, clear=False):
+            handle.write('[ui]\ntheme = "dark"\n')
+        with mock.patch.dict(
+            os.environ, {"BILITERMINAL_CONFIG": config_path}, clear=False
+        ):
             app = self.make_app()
             async with app.run_test(size=(120, 36)) as pilot:
                 await pilot.pause()
@@ -295,17 +348,32 @@ class TextualBootSmokeTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             overlay = app.screen.query_one("#help-overlay")
             self.assertTrue(overlay.has_class("hidden"))
-            keys_command = next(command for command in app.get_system_commands(app.screen) if command[0] == "Keys")
+            keys_command = next(
+                command
+                for command in app.get_system_commands(app.screen)
+                if command[0] == "Keys"
+            )
             keys_command[2]()
             await pilot.pause()
             self.assertFalse(overlay.has_class("hidden"))
-            self.assertFalse(any(type(widget).__name__ == "HelpPanel" for widget in app.screen.walk_children()))
-            keys_command = next(command for command in app.get_system_commands(app.screen) if command[0] == "Keys")
+            self.assertFalse(
+                any(
+                    type(widget).__name__ == "HelpPanel"
+                    for widget in app.screen.walk_children()
+                )
+            )
+            keys_command = next(
+                command
+                for command in app.get_system_commands(app.screen)
+                if command[0] == "Keys"
+            )
             keys_command[2]()
             await pilot.pause()
             self.assertTrue(overlay.has_class("hidden"))
 
-    async def test_command_palette_keys_escape_closes_overlay_without_blank_screen(self) -> None:
+    async def test_command_palette_keys_escape_closes_overlay_without_blank_screen(
+        self,
+    ) -> None:
         app = self.make_app()
         async with app.run_test(size=(120, 36)) as pilot:
             await pilot.pause()
@@ -326,13 +394,20 @@ class TextualBootSmokeTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(app.screen.query_one("#help-overlay").has_class("hidden"))
             self.assertIsNotNone(app.screen.query_one("#video-list"))
             self.assertEqual(len(app.screen_stack), 2)
-            self.assertFalse(any(type(widget).__name__ == "HelpPanel" for widget in app.screen.walk_children()))
+            self.assertFalse(
+                any(
+                    type(widget).__name__ == "HelpPanel"
+                    for widget in app.screen.walk_children()
+                )
+            )
 
     async def test_theme_toggle_propagates_between_detail_and_home(self) -> None:
         config_path = f"{self.temp_dir.name}/config.toml"
         with open(config_path, "w", encoding="utf-8") as handle:
-            handle.write("[ui]\ntheme = \"dark\"\n")
-        with mock.patch.dict(os.environ, {"BILITERMINAL_CONFIG": config_path}, clear=False):
+            handle.write('[ui]\ntheme = "dark"\n')
+        with mock.patch.dict(
+            os.environ, {"BILITERMINAL_CONFIG": config_path}, clear=False
+        ):
             app = self.make_app()
             async with app.run_test(size=(120, 36)) as pilot:
                 await pilot.pause()
@@ -343,9 +418,15 @@ class TextualBootSmokeTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.press("ctrl+t")
                 await pilot.pause()
                 self.assertTrue(app.screen.has_class("theme-light"))
-                self.assertEqual(str(app.screen.query_one("#detail-scroll").styles.background), "Color(255, 243, 248)")
+                self.assertEqual(
+                    str(app.screen.query_one("#detail-scroll").styles.background),
+                    "Color(255, 243, 248)",
+                )
                 await pilot.press("b")
                 await pilot.pause()
                 self.assertEqual(app.screen.__class__.__name__, "HomeScreen")
                 self.assertTrue(app.screen.has_class("theme-light"))
-                self.assertEqual(str(app.screen.query_one("#channel-list").styles.background), "Color(255, 243, 248)")
+                self.assertEqual(
+                    str(app.screen.query_one("#channel-list").styles.background),
+                    "Color(255, 243, 248)",
+                )

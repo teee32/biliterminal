@@ -65,3 +65,57 @@ class ShellLaunchScriptTests(unittest.TestCase):
             )
 
             return argv_log.read_text(encoding="utf-8").splitlines()
+
+
+@unittest.skipUnless(os.name == "nt", "Windows batch wrappers only run on Windows")
+class BatchLaunchScriptTests(unittest.TestCase):
+    def test_package_start_bat_defaults_to_textual_ui(self) -> None:
+        recorded = self._run_batch_wrapper("bili_terminal/start.bat")
+        self.assertEqual(recorded, ["--tui"])
+
+    def test_root_wrapper_defaults_to_textual_ui(self) -> None:
+        recorded = self._run_batch_wrapper("biliterminal.bat")
+        self.assertEqual(recorded, ["--tui"])
+
+    def test_package_start_bat_preserves_command_passthrough(self) -> None:
+        recorded = self._run_batch_wrapper(
+            "bili_terminal/start.bat", "recommend", "-n", "2"
+        )
+        self.assertEqual(recorded, ["recommend", "-n", "2"])
+
+    def _run_batch_wrapper(self, relative_path: str, *args: str) -> list[str]:
+        repo_root = Path(__file__).resolve().parents[2]
+        wrapper_source = repo_root / relative_path
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            temp_root = Path(tmpdir) / "repo"
+            target_wrapper = temp_root / relative_path
+            target_wrapper.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(wrapper_source, target_wrapper)
+
+            package_dir = temp_root / "bili_terminal"
+            package_dir.mkdir(parents=True, exist_ok=True)
+            (package_dir / "__init__.py").write_text("", encoding="utf-8")
+            argv_log = temp_root / "argv.log"
+            (package_dir / "__main__.py").write_text(
+                textwrap.dedent(
+                    f"""\
+                    import pathlib
+                    import sys
+
+                    pathlib.Path(r\"{argv_log}\").write_text("\\n".join(sys.argv[1:]), encoding="utf-8")
+                    raise SystemExit(0)
+                    """
+                ),
+                encoding="utf-8",
+            )
+
+            subprocess.run(
+                ["cmd.exe", "/c", str(target_wrapper), *args],
+                cwd=temp_root,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+
+            return argv_log.read_text(encoding="utf-8").splitlines()

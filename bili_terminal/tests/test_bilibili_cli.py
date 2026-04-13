@@ -44,7 +44,7 @@ class FormattingTests(unittest.TestCase):
     def test_normalize_keyword_drops_suspicious_garbage(self) -> None:
         self.assertEqual(cli.normalize_keyword("ã, æ"), "")
 
-    def test_audio_worker_command_uses_script_path_when_not_frozen(self) -> None:
+    def test_audio_worker_command_uses_module_entrypoint_when_not_frozen(self) -> None:
         stream = cli.AudioStream(
             title="标题",
             url="https://example.com/audio.m4s",
@@ -52,13 +52,32 @@ class FormattingTests(unittest.TestCase):
             user_agent="UA",
             source_kind="dash-audio",
         )
-        with mock.patch.object(cli.sys, "executable", "/tmp/python"), mock.patch.object(cli.sys, "frozen", False, create=True):
+        with (
+            mock.patch.object(cli.sys, "executable", "/tmp/python"),
+            mock.patch.object(cli.sys, "frozen", False, create=True),
+        ):
             command = cli.audio_worker_command(stream)
-        self.assertEqual(command[0], "/tmp/python")
-        self.assertTrue(command[1].endswith("bilibili_cli.py"))
-        self.assertEqual(command[2:], ["audio-worker", "--url", stream.url, "--referer", stream.referer, "--user-agent", "UA", "--title", "标题"])
+        self.assertEqual(
+            command,
+            [
+                "/tmp/python",
+                "-m",
+                "bili_terminal",
+                "audio-worker",
+                "--url",
+                stream.url,
+                "--referer",
+                stream.referer,
+                "--user-agent",
+                "UA",
+                "--title",
+                "标题",
+            ],
+        )
 
-    def test_audio_worker_command_uses_frozen_executable_without_script_path(self) -> None:
+    def test_audio_worker_command_uses_frozen_executable_without_script_path(
+        self,
+    ) -> None:
         stream = cli.AudioStream(
             title="标题",
             url="https://example.com/audio.m4s",
@@ -66,7 +85,14 @@ class FormattingTests(unittest.TestCase):
             user_agent="UA",
             source_kind="dash-audio",
         )
-        with mock.patch.object(cli.sys, "executable", "/Applications/BiliTerminal.app/Contents/Resources/runtime/BiliTerminal"), mock.patch.object(cli.sys, "frozen", True, create=True):
+        with (
+            mock.patch.object(
+                cli.sys,
+                "executable",
+                "/Applications/BiliTerminal.app/Contents/Resources/runtime/BiliTerminal",
+            ),
+            mock.patch.object(cli.sys, "frozen", True, create=True),
+        ):
             command = cli.audio_worker_command(stream)
         self.assertEqual(
             command,
@@ -132,7 +158,12 @@ class FormattingTests(unittest.TestCase):
 
     def test_build_video_url_prefers_redirect(self) -> None:
         self.assertEqual(
-            cli.build_video_url({"redirect_url": "https://www.bilibili.com/bangumi/play/ep1", "bvid": "BV1xx411c7mu"}),
+            cli.build_video_url(
+                {
+                    "redirect_url": "https://www.bilibili.com/bangumi/play/ep1",
+                    "bvid": "BV1xx411c7mu",
+                }
+            ),
             "https://www.bilibili.com/bangumi/play/ep1",
         )
 
@@ -142,7 +173,9 @@ class FormattingTests(unittest.TestCase):
             "https://www.bilibili.com/video/BV1xx411c7mu",
         )
 
-    def test_item_ref_label_prefers_bangumi_episode_when_video_ids_missing(self) -> None:
+    def test_item_ref_label_prefers_bangumi_episode_when_video_ids_missing(
+        self,
+    ) -> None:
         item = cli.VideoItem(
             title="番剧",
             author="官方",
@@ -228,8 +261,16 @@ class FormattingTests(unittest.TestCase):
                 "data": {
                     "dash": {
                         "audio": [
-                            {"id": 30216, "bandwidth": 64000, "baseUrl": "https://example.com/low.m4s"},
-                            {"id": 30280, "bandwidth": 192000, "baseUrl": "https://example.com/high.m4s"},
+                            {
+                                "id": 30216,
+                                "bandwidth": 64000,
+                                "baseUrl": "https://example.com/low.m4s",
+                            },
+                            {
+                                "id": 30280,
+                                "bandwidth": 192000,
+                                "baseUrl": "https://example.com/high.m4s",
+                            },
                         ]
                     }
                 }
@@ -258,11 +299,21 @@ class FormattingTests(unittest.TestCase):
         self.assertEqual(stream.source_kind, "media")
 
     @mock.patch.object(cli, "pid_exists", return_value=True)
-    def test_save_and_load_audio_playback_state(self, _mock_exists: mock.MagicMock) -> None:
+    def test_save_and_load_audio_playback_state(
+        self, _mock_exists: mock.MagicMock
+    ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            with mock.patch.dict(os.environ, {"BILITERMINAL_STATE_DIR": temp_dir}, clear=False):
+            with mock.patch.dict(
+                os.environ, {"BILITERMINAL_STATE_DIR": temp_dir}, clear=False
+            ):
                 cli.save_audio_playback_state(
-                    cli.AudioPlaybackState(pid=1234, title="标题", video_key="BV1xx411c7mu", paused=True, control_pid=5678)
+                    cli.AudioPlaybackState(
+                        pid=1234,
+                        title="标题",
+                        video_key="BV1xx411c7mu",
+                        paused=True,
+                        control_pid=5678,
+                    )
                 )
                 state = cli.load_audio_playback_state()
         self.assertIsNotNone(state)
@@ -274,12 +325,16 @@ class FormattingTests(unittest.TestCase):
         self.assertEqual(state.control_pid, 5678)
 
     @mock.patch.object(cli, "pid_exists", return_value=True)
-    def test_save_and_load_audio_playback_state_with_media_path(self, _mock_exists: mock.MagicMock) -> None:
+    def test_save_and_load_audio_playback_state_with_media_path(
+        self, _mock_exists: mock.MagicMock
+    ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             media_path = os.path.join(temp_dir, "audio.m4a")
             with open(media_path, "wb") as handle:
                 handle.write(b"demo")
-            with mock.patch.dict(os.environ, {"BILITERMINAL_STATE_DIR": temp_dir}, clear=False):
+            with mock.patch.dict(
+                os.environ, {"BILITERMINAL_STATE_DIR": temp_dir}, clear=False
+            ):
                 cli.save_audio_playback_state(
                     cli.AudioPlaybackState(
                         pid=2345,
@@ -310,7 +365,9 @@ class FormattingTests(unittest.TestCase):
     ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             media_path = os.path.join(temp_dir, "audio.m4a")
-            with mock.patch.dict(os.environ, {"BILITERMINAL_STATE_DIR": temp_dir}, clear=False):
+            with mock.patch.dict(
+                os.environ, {"BILITERMINAL_STATE_DIR": temp_dir}, clear=False
+            ):
                 cli.save_audio_playback_state(
                     cli.AudioPlaybackState(
                         pid=2345,
@@ -352,7 +409,12 @@ class ClientTests(unittest.TestCase):
                 "code": 0,
                 "data": {
                     "result": [
-                        {"type": "video", "title": "视频A", "author": "UP1", "bvid": "BV1xx411c7mu"},
+                        {
+                            "type": "video",
+                            "title": "视频A",
+                            "author": "UP1",
+                            "bvid": "BV1xx411c7mu",
+                        },
                         {"type": "ketang", "title": "课程B"},
                     ]
                 },
@@ -370,8 +432,12 @@ class ClientTests(unittest.TestCase):
 
     @mock.patch.object(cli.BilibiliClient, "_warmup")
     @mock.patch.object(cli.BilibiliClient, "_open")
-    def test_retries_after_http_412(self, mock_open: mock.MagicMock, mock_warmup: mock.MagicMock) -> None:
-        error = cli.urllib.error.HTTPError("https://example.com", 412, "Precondition Failed", {}, io.BytesIO(b""))
+    def test_retries_after_http_412(
+        self, mock_open: mock.MagicMock, mock_warmup: mock.MagicMock
+    ) -> None:
+        error = cli.urllib.error.HTTPError(
+            "https://example.com", 412, "Precondition Failed", {}, io.BytesIO(b"")
+        )
         self.addCleanup(error.close)
         mock_open.side_effect = [
             error,
@@ -382,11 +448,19 @@ class ClientTests(unittest.TestCase):
         mock_warmup.assert_called_once()
 
     @mock.patch.object(cli.BilibiliClient, "_open")
-    def test_warmup_hits_homepage_before_referer(self, mock_open: mock.MagicMock) -> None:
+    def test_warmup_hits_homepage_before_referer(
+        self, mock_open: mock.MagicMock
+    ) -> None:
         mock_open.return_value = self.make_response({"code": 0})
         cli.BilibiliClient()._warmup("https://www.bilibili.com/video/BV1xx411c7mu")
         urls = [call.args[0].full_url for call in mock_open.call_args_list]
-        self.assertEqual(urls, ["https://www.bilibili.com/", "https://www.bilibili.com/video/BV1xx411c7mu"])
+        self.assertEqual(
+            urls,
+            [
+                "https://www.bilibili.com/",
+                "https://www.bilibili.com/video/BV1xx411c7mu",
+            ],
+        )
 
     @mock.patch.object(cli.BilibiliClient, "_open")
     def test_recommend_parses_home_feed_items(self, mock_open: mock.MagicMock) -> None:
@@ -401,7 +475,12 @@ class ClientTests(unittest.TestCase):
                             "owner": {"name": "UP1"},
                             "bvid": "BV1xx411c7mu",
                             "duration": 99,
-                            "stat": {"view": 10, "danmaku": 2, "like": 3, "favorite": 4},
+                            "stat": {
+                                "view": 10,
+                                "danmaku": 2,
+                                "like": 3,
+                                "favorite": 4,
+                            },
                         }
                     ]
                 },
@@ -412,7 +491,9 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(items[0].title, "首页推荐")
 
     @mock.patch.object(cli.BilibiliClient, "_open")
-    def test_trending_keywords_extracts_display_words(self, mock_open: mock.MagicMock) -> None:
+    def test_trending_keywords_extracts_display_words(
+        self, mock_open: mock.MagicMock
+    ) -> None:
         mock_open.return_value = self.make_response(
             {
                 "code": 0,
@@ -429,7 +510,9 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(cli.BilibiliClient().trending_keywords(2), ["原神", "中文"])
 
     @mock.patch.object(cli.BilibiliClient, "_open")
-    def test_region_ranking_honors_day_page_and_limit(self, mock_open: mock.MagicMock) -> None:
+    def test_region_ranking_honors_day_page_and_limit(
+        self, mock_open: mock.MagicMock
+    ) -> None:
         mock_open.return_value = self.make_response(
             {
                 "code": 0,
@@ -447,7 +530,9 @@ class ClientTests(unittest.TestCase):
         self.assertEqual([item.title for item in items], ["排行榜 2"])
 
     @mock.patch.object(cli.BilibiliClient, "_open")
-    def test_bangumi_latest_reads_result_payload(self, mock_open: mock.MagicMock) -> None:
+    def test_bangumi_latest_reads_result_payload(
+        self, mock_open: mock.MagicMock
+    ) -> None:
         mock_open.return_value = self.make_response(
             {
                 "code": 0,
@@ -472,7 +557,9 @@ class ClientTests(unittest.TestCase):
 
     def test_audio_stream_for_bangumi_item_uses_playurl_api(self) -> None:
         client = cli.BilibiliClient()
-        client._request_json = mock.MagicMock(return_value={"durl": [{"url": "https://example.com/bangumi.mp4"}]})
+        client._request_json = mock.MagicMock(
+            return_value={"durl": [{"url": "https://example.com/bangumi.mp4"}]}
+        )
         item = cli.VideoItem(
             title="番剧更新",
             author="官方",
@@ -497,10 +584,15 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(stream.url, "https://example.com/bangumi.mp4")
         self.assertEqual(stream.source_kind, "media")
 
-    def test_audio_stream_for_bangumi_index_item_ignores_string_result_field(self) -> None:
+    def test_audio_stream_for_bangumi_index_item_ignores_string_result_field(
+        self,
+    ) -> None:
         client = cli.BilibiliClient()
         client._request_json = mock.MagicMock(
-            return_value={"result": "suee", "durl": [{"url": "https://example.com/index-bangumi.mp4"}]}
+            return_value={
+                "result": "suee",
+                "durl": [{"url": "https://example.com/index-bangumi.mp4"}],
+            }
         )
         item = cli.VideoItem(
             title="番剧索引",
@@ -543,7 +635,9 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(comments[0].message, "评论内容")
 
     @mock.patch.object(cli.BilibiliClient, "_open")
-    def test_comments_prefers_bvid_referer_when_present(self, mock_open: mock.MagicMock) -> None:
+    def test_comments_prefers_bvid_referer_when_present(
+        self, mock_open: mock.MagicMock
+    ) -> None:
         mock_open.side_effect = [
             self.make_text_response(
                 (
@@ -559,7 +653,9 @@ class ClientTests(unittest.TestCase):
         self.assertIn("BV1xx411c7mu", request.headers["Referer"])
 
     @mock.patch.object(cli.BilibiliClient, "_open")
-    def test_comments_with_bvid_uses_wbi_main_and_merges_top_replies(self, mock_open: mock.MagicMock) -> None:
+    def test_comments_with_bvid_uses_wbi_main_and_merges_top_replies(
+        self, mock_open: mock.MagicMock
+    ) -> None:
         mock_open.side_effect = [
             self.make_text_response(
                 (
@@ -601,7 +697,9 @@ class ClientTests(unittest.TestCase):
         self.assertEqual([comment.author for comment in comments], ["置顶", "普通"])
 
     @mock.patch.object(cli.BilibiliClient, "_open")
-    def test_comments_with_bvid_refreshes_cached_wbi_keys_after_permission_error(self, mock_open: mock.MagicMock) -> None:
+    def test_comments_with_bvid_refreshes_cached_wbi_keys_after_permission_error(
+        self, mock_open: mock.MagicMock
+    ) -> None:
         mock_open.side_effect = [
             self.make_text_response(
                 (
@@ -609,7 +707,9 @@ class ClientTests(unittest.TestCase):
                     '"defaultWbiKey":{"wbiImgKey":"img","wbiSubKey":"sub"}};(function(){})</script>'
                 )
             ),
-            self.make_text_response('encWbiKeys:{wbiImgKey:"oldimg",wbiSubKey:"oldsub"}'),
+            self.make_text_response(
+                'encWbiKeys:{wbiImgKey:"oldimg",wbiSubKey:"oldsub"}'
+            ),
             self.make_response({"code": -403, "message": "访问权限不足"}),
             self.make_text_response(
                 (
@@ -617,7 +717,9 @@ class ClientTests(unittest.TestCase):
                     '"defaultWbiKey":{"wbiImgKey":"img","wbiSubKey":"sub"}};(function(){})</script>'
                 )
             ),
-            self.make_text_response('encWbiKeys:{wbiImgKey:"newimg",wbiSubKey:"newsub"}'),
+            self.make_text_response(
+                'encWbiKeys:{wbiImgKey:"newimg",wbiSubKey:"newsub"}'
+            ),
             self.make_response(
                 {
                     "code": 0,
@@ -637,7 +739,9 @@ class ClientTests(unittest.TestCase):
         ]
         comments = cli.BilibiliClient().comments(123, page_size=1, bvid="BV1xx411c7mu")
         request_urls = [call.args[0].full_url for call in mock_open.call_args_list]
-        self.assertEqual(request_urls.count("https://www.bilibili.com/video/BV1xx411c7mu"), 2)
+        self.assertEqual(
+            request_urls.count("https://www.bilibili.com/video/BV1xx411c7mu"), 2
+        )
         self.assertEqual(comments[0].author, "普通")
 
     def test_audio_stream_for_item_parses_embedded_playinfo(self) -> None:
@@ -670,19 +774,21 @@ class ClientTests(unittest.TestCase):
     @mock.patch.object(cli, "clear_audio_playback_state")
     @mock.patch.object(cli, "pid_exists", side_effect=[True, False])
     @mock.patch.object(cli, "wait_for_audio_exit")
-    @mock.patch.object(cli, "send_audio_signal")
+    @mock.patch.object(cli.platform_audio, "terminate_process")
     @mock.patch.object(cli, "load_audio_playback_state")
     def test_stop_audio_playback_terminates_current_session(
         self,
         mock_load: mock.MagicMock,
-        mock_signal: mock.MagicMock,
+        mock_terminate: mock.MagicMock,
         _mock_wait: mock.MagicMock,
         _mock_exists: mock.MagicMock,
         mock_clear: mock.MagicMock,
     ) -> None:
-        mock_load.return_value = cli.AudioPlaybackState(pid=4321, title="标题", video_key="BV1xx411c7mu", paused=False)
+        mock_load.return_value = cli.AudioPlaybackState(
+            pid=4321, title="标题", video_key="BV1xx411c7mu", paused=False
+        )
         message = cli.stop_audio_playback()
-        mock_signal.assert_called_once()
+        mock_terminate.assert_called_once_with(4321)
         mock_clear.assert_called_once()
         self.assertIn("已停止音频", message)
 
@@ -690,12 +796,12 @@ class ClientTests(unittest.TestCase):
     @mock.patch.object(cli, "clear_audio_playback_state")
     @mock.patch.object(cli, "pid_exists", side_effect=[True, True, False])
     @mock.patch.object(cli, "wait_for_audio_exit")
-    @mock.patch.object(cli, "send_audio_signal")
+    @mock.patch.object(cli.platform_audio, "terminate_process")
     @mock.patch.object(cli, "load_audio_playback_state")
     def test_stop_audio_playback_cleans_media_path_for_process_backend(
         self,
         mock_load: mock.MagicMock,
-        mock_signal: mock.MagicMock,
+        mock_terminate: mock.MagicMock,
         _mock_wait: mock.MagicMock,
         _mock_exists: mock.MagicMock,
         mock_clear: mock.MagicMock,
@@ -711,9 +817,9 @@ class ClientTests(unittest.TestCase):
             media_path="/tmp/audio.m4a",
         )
         message = cli.stop_audio_playback()
-        self.assertEqual(mock_signal.call_count, 2)
-        self.assertEqual(mock_signal.call_args_list[0].args, (8765, cli.signal.SIGTERM))
-        self.assertEqual(mock_signal.call_args_list[1].args, (4321, cli.signal.SIGTERM))
+        self.assertEqual(mock_terminate.call_count, 2)
+        mock_terminate.assert_any_call(8765)
+        mock_terminate.assert_any_call(4321)
         mock_cleanup.assert_called_once_with("/tmp/audio.m4a")
         mock_clear.assert_called_once()
         self.assertIn("已停止音频", message)
@@ -727,6 +833,9 @@ class ClientTests(unittest.TestCase):
         mock_signal: mock.MagicMock,
         mock_save: mock.MagicMock,
     ) -> None:
+        sigusr1 = getattr(cli.signal, "SIGUSR1", None)
+        if sigusr1 is None:
+            self.skipTest("SIGUSR1 not available on this platform")
         state = cli.AudioPlaybackState(
             pid=4321,
             title="标题",
@@ -738,7 +847,7 @@ class ClientTests(unittest.TestCase):
         )
         mock_load.return_value = state
         message = cli.pause_audio_playback()
-        mock_signal.assert_called_once_with(8765, cli.signal.SIGUSR1)
+        mock_signal.assert_called_once_with(8765, sigusr1)
         self.assertTrue(state.paused)
         mock_save.assert_called_once_with(state)
         self.assertIn("已暂停音频", message)
@@ -752,6 +861,9 @@ class ClientTests(unittest.TestCase):
         mock_signal: mock.MagicMock,
         mock_save: mock.MagicMock,
     ) -> None:
+        sigusr2 = getattr(cli.signal, "SIGUSR2", None)
+        if sigusr2 is None:
+            self.skipTest("SIGUSR2 not available on this platform")
         state = cli.AudioPlaybackState(
             pid=4321,
             title="标题",
@@ -763,7 +875,7 @@ class ClientTests(unittest.TestCase):
         )
         mock_load.return_value = state
         message = cli.resume_audio_playback()
-        mock_signal.assert_called_once_with(8765, cli.signal.SIGUSR2)
+        mock_signal.assert_called_once_with(8765, sigusr2)
         self.assertFalse(state.paused)
         mock_save.assert_called_once_with(state)
         self.assertIn("已继续播放音频", message)
@@ -773,7 +885,9 @@ class ClientTests(unittest.TestCase):
     @mock.patch.object(cli, "load_audio_playback_state")
     @mock.patch.object(cli, "download_audio_to_path")
     @mock.patch.object(cli, "prepare_audio_temp_path", return_value="/tmp/audio.m4a")
-    @mock.patch.object(cli, "macos_audio_helper_path", return_value="/tmp/biliterminal-audio-helper")
+    @mock.patch.object(
+        cli, "macos_audio_helper_path", return_value="/tmp/biliterminal-audio-helper"
+    )
     @mock.patch.object(cli, "build_audio_player_command", return_value=None)
     @mock.patch.object(cli.subprocess, "Popen")
     def test_run_audio_worker_switches_to_macos_native_helper(
@@ -791,8 +905,15 @@ class ClientTests(unittest.TestCase):
         helper_process.pid = 9988
         helper_process.wait.return_value = 0
         mock_popen.return_value = helper_process
-        mock_load.return_value = cli.AudioPlaybackState(pid=4321, title="标题", video_key="BV1xx411c7mu")
-        result = cli.run_audio_worker("https://example.com/audio.m4s", "https://www.bilibili.com/video/BV1", "UA", "标题")
+        mock_load.return_value = cli.AudioPlaybackState(
+            pid=4321, title="标题", video_key="BV1xx411c7mu"
+        )
+        result = cli.run_audio_worker(
+            "https://example.com/audio.m4s",
+            "https://www.bilibili.com/video/BV1",
+            "UA",
+            "标题",
+        )
         self.assertEqual(result, 0)
         mock_download.assert_called_once()
         mock_popen.assert_called_once_with(
@@ -847,7 +968,9 @@ class ShellTests(unittest.TestCase):
         self.assertEqual(args.command, "audio")
 
     def test_parser_supports_rank_command(self) -> None:
-        args = cli.build_parser().parse_args(["rank", "动画", "--day", "7", "--page", "2", "--limit", "3"])
+        args = cli.build_parser().parse_args(
+            ["rank", "动画", "--day", "7", "--page", "2", "--limit", "3"]
+        )
         self.assertEqual(args.command, "rank")
         self.assertEqual(args.region, "动画")
         self.assertEqual(args.day, 7)
@@ -855,14 +978,28 @@ class ShellTests(unittest.TestCase):
         self.assertEqual(args.limit, 3)
 
     def test_parser_supports_ranking_alias_with_rid(self) -> None:
-        args = cli.build_parser().parse_args(["ranking", "--rid", "181", "--day", "7", "--limit", "4"])
+        args = cli.build_parser().parse_args(
+            ["ranking", "--rid", "181", "--day", "7", "--limit", "4"]
+        )
         self.assertEqual(args.command, "ranking")
         self.assertEqual(args.rid, 181)
         self.assertEqual(args.day, 7)
         self.assertEqual(args.limit, 4)
 
     def test_parser_supports_bangumi_command_with_index_filters(self) -> None:
-        args = cli.build_parser().parse_args(["bangumi", "番剧", "--index", "--area", "大陆", "--page", "2", "--limit", "4"])
+        args = cli.build_parser().parse_args(
+            [
+                "bangumi",
+                "番剧",
+                "--index",
+                "--area",
+                "大陆",
+                "--page",
+                "2",
+                "--limit",
+                "4",
+            ]
+        )
         self.assertEqual(args.command, "bangumi")
         self.assertEqual(args.category, "番剧")
         self.assertTrue(args.index)
@@ -922,7 +1059,9 @@ class ShellTests(unittest.TestCase):
         mock_open.assert_called_once_with("https://www.bilibili.com/video/BV1xx411c7mu")
 
     @mock.patch.object(cli, "play_audio_for_item")
-    def test_do_audio_by_index_uses_last_results(self, mock_play_audio: mock.MagicMock) -> None:
+    def test_do_audio_by_index_uses_last_results(
+        self, mock_play_audio: mock.MagicMock
+    ) -> None:
         mock_play_audio.return_value = "已开始播放音频: 标题"
         shell = cli.BilibiliCLI(cli.BilibiliClient(), self.make_store())
         shell.last_items = [
@@ -948,7 +1087,9 @@ class ShellTests(unittest.TestCase):
         self.assertIn("已开始播放音频", stdout.getvalue())
 
     @mock.patch.object(cli, "stop_audio_playback")
-    def test_do_audio_stop_uses_audio_control(self, mock_stop_audio: mock.MagicMock) -> None:
+    def test_do_audio_stop_uses_audio_control(
+        self, mock_stop_audio: mock.MagicMock
+    ) -> None:
         mock_stop_audio.return_value = "已停止音频: 标题"
         shell = cli.BilibiliCLI(cli.BilibiliClient(), self.make_store())
         with mock.patch("sys.stdout", new=io.StringIO()) as stdout:
@@ -1057,7 +1198,9 @@ class CommandDispatchTests(unittest.TestCase):
         self.addCleanup(temp_dir.cleanup)
         return cli.HistoryStore(path=f"{temp_dir.name}/history.json")
 
-    def make_item(self, title: str = "标题", bvid: str = "BV1xx411c7mu") -> cli.VideoItem:
+    def make_item(
+        self, title: str = "标题", bvid: str = "BV1xx411c7mu"
+    ) -> cli.VideoItem:
         return cli.VideoItem(
             title=title,
             author="UP",
@@ -1075,20 +1218,40 @@ class CommandDispatchTests(unittest.TestCase):
         )
 
     @mock.patch.object(cli, "print_video_list")
-    def test_run_once_rank_uses_region_ranking(self, mock_print_video_list: mock.MagicMock) -> None:
+    def test_run_once_rank_uses_region_ranking(
+        self, mock_print_video_list: mock.MagicMock
+    ) -> None:
         client = mock.MagicMock(spec=cli.BilibiliClient)
         client.region_ranking.return_value = [self.make_item("影视排行")]
-        args = cli.build_parser().parse_args(["rank", "--rid", "181", "--day", "7", "--page", "2", "--limit", "3"])
+        args = cli.build_parser().parse_args(
+            ["rank", "--rid", "181", "--day", "7", "--page", "2", "--limit", "3"]
+        )
         result = cli.run_once(args, client, self.make_store())
         self.assertEqual(result, 0)
-        client.region_ranking.assert_called_once_with(rid=181, day=7, page_size=3, page=2)
+        client.region_ranking.assert_called_once_with(
+            rid=181, day=7, page_size=3, page=2
+        )
         mock_print_video_list.assert_called_once()
 
     @mock.patch.object(cli, "print_video_list")
-    def test_run_once_bangumi_uses_client_bangumi(self, mock_print_video_list: mock.MagicMock) -> None:
+    def test_run_once_bangumi_uses_client_bangumi(
+        self, mock_print_video_list: mock.MagicMock
+    ) -> None:
         client = mock.MagicMock(spec=cli.BilibiliClient)
         client.bangumi.return_value = [self.make_item("番剧索引")]
-        args = cli.build_parser().parse_args(["bangumi", "番剧", "--index", "--area", "大陆", "--page", "2", "--limit", "4"])
+        args = cli.build_parser().parse_args(
+            [
+                "bangumi",
+                "番剧",
+                "--index",
+                "--area",
+                "大陆",
+                "--page",
+                "2",
+                "--limit",
+                "4",
+            ]
+        )
         result = cli.run_once(args, client, self.make_store())
         self.assertEqual(result, 0)
         client.bangumi.assert_called_once()
@@ -1096,7 +1259,9 @@ class CommandDispatchTests(unittest.TestCase):
 
 
 class HistoryStoreTests(unittest.TestCase):
-    def make_item(self, title: str = "标题", bvid: str = "BV1xx411c7mu") -> cli.VideoItem:
+    def make_item(
+        self, title: str = "标题", bvid: str = "BV1xx411c7mu"
+    ) -> cli.VideoItem:
         return cli.VideoItem(
             title=title,
             author="UP",
@@ -1135,13 +1300,19 @@ class HistoryStoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             path = f"{temp_dir}/history.json"
             with open(path, "w", encoding="utf-8") as handle:
-                json.dump({"recent_keywords": ["ä¸­æ", "ã, æ", "原神"], "recent_videos": []}, handle, ensure_ascii=False)
+                json.dump(
+                    {"recent_keywords": ["ä¸­æ", "ã, æ", "原神"], "recent_videos": []},
+                    handle,
+                    ensure_ascii=False,
+                )
             store = cli.HistoryStore(path=path)
             self.assertEqual(store.get_recent_keywords(5), ["中文", "原神"])
 
     def test_default_history_path_uses_explicit_state_dir_env(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            with mock.patch.dict(os.environ, {"BILITERMINAL_STATE_DIR": temp_dir}, clear=False):
+            with mock.patch.dict(
+                os.environ, {"BILITERMINAL_STATE_DIR": temp_dir}, clear=False
+            ):
                 self.assertEqual(
                     cli.default_history_path(),
                     os.path.join(temp_dir, "bilibili-cli-history.json"),
@@ -1149,7 +1320,9 @@ class HistoryStoreTests(unittest.TestCase):
 
     def test_default_history_path_uses_home_dir_env(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            with mock.patch.dict(os.environ, {"BILITERMINAL_HOME": temp_dir}, clear=False):
+            with mock.patch.dict(
+                os.environ, {"BILITERMINAL_HOME": temp_dir}, clear=False
+            ):
                 self.assertEqual(
                     cli.default_history_path(),
                     os.path.join(temp_dir, "state", "bilibili-cli-history.json"),
@@ -1157,7 +1330,9 @@ class HistoryStoreTests(unittest.TestCase):
 
     def test_history_store_uses_dynamic_default_path(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            with mock.patch.dict(os.environ, {"BILITERMINAL_HOME": temp_dir}, clear=False):
+            with mock.patch.dict(
+                os.environ, {"BILITERMINAL_HOME": temp_dir}, clear=False
+            ):
                 store = cli.HistoryStore()
                 self.assertEqual(
                     store.path,
@@ -1192,7 +1367,9 @@ class HistoryStoreTests(unittest.TestCase):
 
 
 class TUIStateTests(unittest.TestCase):
-    def make_item(self, title: str = "标题", bvid: str = "BV1xx411c7mu") -> cli.VideoItem:
+    def make_item(
+        self, title: str = "标题", bvid: str = "BV1xx411c7mu"
+    ) -> cli.VideoItem:
         return cli.VideoItem(
             title=title,
             author="UP",
@@ -1209,7 +1386,9 @@ class TUIStateTests(unittest.TestCase):
             raw={},
         )
 
-    def make_bangumi_item(self, title: str = "番剧更新", episode_id: int = 1) -> cli.VideoItem:
+    def make_bangumi_item(
+        self, title: str = "番剧更新", episode_id: int = 1
+    ) -> cli.VideoItem:
         return cli.VideoItem(
             title=title,
             author="第1话",
@@ -1282,8 +1461,12 @@ class TUIStateTests(unittest.TestCase):
             with mock.patch.dict(sys.modules, {"curses": fake_curses}):
                 tui.init_theme()
             self.assertIn(("init_color", 13, *cli.BILIBILI_PINK_RGB), fake_curses.calls)
-            self.assertIn(("init_pair", 1, fake_curses.COLOR_WHITE, 13), fake_curses.calls)
-            self.assertIn(("init_pair", 4, fake_curses.COLOR_BLACK, 13), fake_curses.calls)
+            self.assertIn(
+                ("init_pair", 1, fake_curses.COLOR_WHITE, 13), fake_curses.calls
+            )
+            self.assertIn(
+                ("init_pair", 4, fake_curses.COLOR_BLACK, 13), fake_curses.calls
+            )
             self.assertTrue(tui.use_colors)
 
     def test_load_items_uses_home_recommend_channel(self) -> None:
@@ -1307,7 +1490,9 @@ class TUIStateTests(unittest.TestCase):
             tui = cli.BilibiliTUI(client, store)
             tui.channel_index = len(tui.channels) - 1
             tui.load_items()
-            client.bangumi.assert_called_once_with(category="番剧", index=False, area=None, page=1, page_size=tui.limit)
+            client.bangumi.assert_called_once_with(
+                category="番剧", index=False, area=None, page=1, page_size=tui.limit
+            )
             client.video.assert_not_called()
             self.assertEqual(tui.items[0].title, "番剧更新")
 
@@ -1368,7 +1553,13 @@ class TUIStateTests(unittest.TestCase):
             tui = cli.BilibiliTUI(cli.BilibiliClient(), store)
             tui.items = [self.make_item()]
             tui.ensure_comments_for_selected = mock.MagicMock()
-            tui.current_comments = mock.MagicMock(return_value=[cli.CommentItem(author="评论者", message="内容", like=1, ctime=1710000000)])
+            tui.current_comments = mock.MagicMock(
+                return_value=[
+                    cli.CommentItem(
+                        author="评论者", message="内容", like=1, ctime=1710000000
+                    )
+                ]
+            )
             tui.refresh_comments()
             tui.ensure_comments_for_selected.assert_called_once_with(force=True)
             self.assertEqual(tui.status, "已加载评论 1 条")
@@ -1379,7 +1570,9 @@ class TUIStateTests(unittest.TestCase):
             tui = cli.BilibiliTUI(cli.BilibiliClient(), store)
             tui.items = [self.make_item()]
             tui.ensure_comments_for_selected = mock.MagicMock()
-            tui.current_comment_error = mock.MagicMock(return_value="评论接口受限，请按 o 在浏览器中查看")
+            tui.current_comment_error = mock.MagicMock(
+                return_value="评论接口受限，请按 o 在浏览器中查看"
+            )
             tui.refresh_comments()
             tui.ensure_comments_for_selected.assert_called_once_with(force=True)
             self.assertIn("评论加载失败", tui.status)
@@ -1420,7 +1613,9 @@ class TUIStateTests(unittest.TestCase):
             self.assertIn("已取消收藏", tui.status)
 
     @mock.patch.object(cli, "play_audio_for_item")
-    def test_play_selected_audio_updates_status(self, mock_play_audio: mock.MagicMock) -> None:
+    def test_play_selected_audio_updates_status(
+        self, mock_play_audio: mock.MagicMock
+    ) -> None:
         mock_play_audio.return_value = "已开始播放音频: 标题"
         with tempfile.TemporaryDirectory() as temp_dir:
             store = cli.HistoryStore(path=f"{temp_dir}/history.json")
@@ -1593,7 +1788,9 @@ class TUIStateTests(unittest.TestCase):
             tui = cli.BilibiliTUI(cli.BilibiliClient(), store)
             item = self.make_item()
             tui.items = [item]
-            tui.comment_errors[item.bvid or str(item.aid)] = "评论接口受限，请按 o 在浏览器中查看"
+            tui.comment_errors[item.bvid or str(item.aid)] = (
+                "评论接口受限，请按 o 在浏览器中查看"
+            )
             fake = FakeWindow()
             tui.draw_comments_panel(fake, 0, 0, 8, 42)
             rendered = " ".join(fake.lines)
