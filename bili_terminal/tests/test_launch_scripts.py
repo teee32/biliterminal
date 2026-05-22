@@ -11,9 +11,9 @@ from pathlib import Path
 
 
 class ShellLaunchScriptTests(unittest.TestCase):
-    def test_root_wrapper_defaults_to_legacy_tui(self) -> None:
+    def test_root_wrapper_defaults_to_textual_tui(self) -> None:
         recorded = self._run_wrapper("biliterminal")
-        self.assertEqual(recorded, ["-m", "bili_terminal", "--legacy-tui"])
+        self.assertEqual(recorded, ["-m", "bili_terminal", "--tui"])
 
     def test_root_wrapper_routes_dash_tui_to_textual(self) -> None:
         recorded = self._run_wrapper("biliterminal", "--tui")
@@ -25,6 +25,10 @@ class ShellLaunchScriptTests(unittest.TestCase):
 
     def test_start_sh_preserves_command_passthrough(self) -> None:
         recorded = self._run_wrapper("bili_terminal/start.sh", "recommend", "-n", "2")
+        self.assertEqual(recorded, ["-m", "bili_terminal", "recommend", "-n", "2"])
+
+    def test_unknown_args_are_plain_passthrough_not_wrapper_default(self) -> None:
+        recorded = self._run_wrapper("biliterminal", "recommend", "-n", "2")
         self.assertEqual(recorded, ["-m", "bili_terminal", "recommend", "-n", "2"])
 
     def _run_wrapper(self, relative_path: str, *args: str) -> list[str]:

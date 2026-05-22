@@ -3,6 +3,15 @@ from __future__ import annotations
 import sys
 from typing import Any
 
+from .keymap import (
+    APP_BINDING_SPECS,
+    APP_CHANNEL_SHORTCUT_KEYS,
+    KEYMAP_GROUPS,
+    KEYMAP_SUMMARY,
+    THEME_MENU_SOURCE_TEXT,
+    THEME_TOGGLE_SOURCE_TEXT,
+)
+
 TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
 
 try:
@@ -15,69 +24,39 @@ except ModuleNotFoundError as exc:  # pragma: no cover - exercised by smoke test
     Binding = None  # type: ignore[assignment]
     Key = Any  # type: ignore[assignment,misc]
 else:
-    from ..bilibili_cli import BilibiliClient, HistoryStore
-    from .screens import FavoritesScreen, HistoryScreen, HomeScreen, SearchScreen, ThemePickerScreen
-    from .utils import TextualAdapter, load_tui_config, save_tui_config
+    from ..core import BilibiliClient, HistoryStore
+    from .screens import FavoritesScreen, HistoryScreen, HomeScreen, SearchScreen, ThemePickerScreen, WatchLaterScreen
+    from .utils import (
+        TUI_THEME_NAMES,
+        TextualAdapter,
+        format_theme_status_message,
+        load_tui_config,
+        normalize_tui_theme,
+        save_tui_config,
+    )
 
-LEGACY_KEYMAP_SUMMARY = [
-    ("up/down", "↑/↓ / j/k"),
-    ("detail", "Enter"),
-    ("back", "Esc / b"),
-    ("search", "/ / s"),
-    ("channels", "Tab / Shift+Tab / 1-9 / 0"),
-    ("history", "v"),
-    ("favorites", "m / f"),
-    ("audio", "a / x"),
-    ("paging", "n / p / PgUp / PgDn"),
-    ("browser", "o"),
-    ("comments", "c"),
-    ("refresh", "r"),
-    ("help", "?"),
-    ("quit", "q"),
-]
+APP_CSS_PATH = "styles/bili_dark.tcss"
+APP_TITLE = "BiliTerminal"
+APP_SUB_TITLE = "Textual v0.3.1"
+APP_ENABLE_COMMAND_PALETTE = True
+
+
+def build_app_bindings() -> tuple[Any, ...]:
+    if Binding is None:
+        return ()
+    return tuple(Binding(key, action, show=False) for key, action in APP_BINDING_SPECS)
 
 
 if TEXTUAL_IMPORT_ERROR is None:
 
     class BiliTerminalApp(App[None]):
-        """Textual app shell for BiliTerminal v0.3.0."""
+        """Textual app shell for BiliTerminal v0.3.1."""
 
-        CSS_PATH = "styles/bili_dark.tcss"
-        TITLE = "BiliTerminal"
-        SUB_TITLE = "Textual v0.3.0"
-        ENABLE_COMMAND_PALETTE = True
-        BINDINGS = [
-            Binding("up", "move_up", show=False),
-            Binding("down", "move_down", show=False),
-            Binding("j", "move_up", show=False),
-            Binding("k", "move_down", show=False),
-            Binding("enter", "show_detail", show=False),
-            Binding("escape", "go_back", show=False),
-            Binding("b", "go_back", show=False),
-            Binding("slash", "focus_search", show=False),
-            Binding("s", "focus_search", show=False),
-            Binding("tab", "next_channel", show=False),
-            Binding("shift+tab", "prev_channel", show=False),
-            Binding("l", "rerun_last_search", show=False),
-            Binding("d", "default_search", show=False),
-            Binding("h", "go_home", show=False),
-            Binding("v", "show_history", show=False),
-            Binding("m", "show_favorites", show=False),
-            Binding("f", "toggle_favorite", show=False),
-            Binding("a", "toggle_audio", show=False),
-            Binding("x", "stop_audio", show=False),
-            Binding("n", "next_page", show=False),
-            Binding("p", "prev_page", show=False),
-            Binding("pageup", "detail_page_up", show=False),
-            Binding("pagedown", "detail_page_down", show=False),
-            Binding("o", "open_in_browser", show=False),
-            Binding("c", "refresh_comments", show=False),
-            Binding("r", "refresh_view", show=False),
-            Binding("ctrl+t", "toggle_theme", show=False),
-            Binding("f2", "toggle_theme", show=False),
-            Binding("question_mark", "toggle_help", show=False),
-            Binding("q", "quit", show=False),
-        ]
+        CSS_PATH = APP_CSS_PATH
+        TITLE = APP_TITLE
+        SUB_TITLE = APP_SUB_TITLE
+        ENABLE_COMMAND_PALETTE = APP_ENABLE_COMMAND_PALETTE
+        BINDINGS = build_app_bindings()
 
         def __init__(
             self,
@@ -101,7 +80,7 @@ if TEXTUAL_IMPORT_ERROR is None:
             self.set_interval(1.0, self._poll_config)
 
         def on_key(self, event: Key) -> None:
-            if event.key in {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9"}:
+            if event.key in APP_CHANNEL_SHORTCUT_KEYS:
                 self.action_select_channel_shortcut(event.key)
                 event.stop()
 
@@ -118,11 +97,12 @@ if TEXTUAL_IMPORT_ERROR is None:
                 yield screen
 
         def apply_theme_to_screen(self, screen) -> None:
-            is_light = self.tui_config.theme == "light"
-            self.set_class(is_light, "theme-light")
-            self.set_class(not is_light, "theme-dark")
-            screen.set_class(is_light, "theme-light")
-            screen.set_class(not is_light, "theme-dark")
+            active_theme = self.tui_config.theme
+            for theme in TUI_THEME_NAMES:
+                class_name = f"theme-{theme}"
+                enabled = active_theme == theme
+                self.set_class(enabled, class_name)
+                screen.set_class(enabled, class_name)
             screen.refresh(repaint=True, layout=True)
 
         def sync_theme(self) -> None:
@@ -137,24 +117,23 @@ if TEXTUAL_IMPORT_ERROR is None:
             self.tui_config = latest
             self.sync_theme()
 
-        def set_theme(self, theme: str, *, source: str = "Ctrl+T / F2") -> None:
-            normalized = "light" if str(theme).lower() == "light" else "dark"
+        def _set_current_screen_status(self, message: str) -> None:
+            status_setter = getattr(self.screen, "set_status", None)
+            if callable(status_setter):
+                status_setter(message)
+
+        def set_theme(self, theme: str, *, source: str = THEME_TOGGLE_SOURCE_TEXT) -> None:
+            normalized = normalize_tui_theme(theme)
             if normalized == self.tui_config.theme:
-                current_screen = self.screen
-                status_setter = getattr(current_screen, "set_status", None)
-                if callable(status_setter):
-                    status_setter(f"当前已是{'浅色' if normalized == 'light' else '深色'}主题（{source}）")
+                self._set_current_screen_status(format_theme_status_message(normalized, source, unchanged=True))
                 return
             self.tui_config = save_tui_config(normalized, self.tui_config.path)
             self.sync_theme()
-            current_screen = self.screen
-            status_setter = getattr(current_screen, "set_status", None)
-            if callable(status_setter):
-                status_setter(f"主题已切换为 {'浅色' if normalized == 'light' else '深色'}（{source}）")
+            self._set_current_screen_status(format_theme_status_message(normalized, source))
 
         def _handle_theme_selection(self, theme: str | None) -> None:
             if theme:
-                self.set_theme(theme, source="主题菜单")
+                self.set_theme(theme, source=THEME_MENU_SOURCE_TEXT)
 
         def action_change_theme(self) -> None:
             self.push_screen(
@@ -163,7 +142,8 @@ if TEXTUAL_IMPORT_ERROR is None:
             )
 
         def action_toggle_theme(self) -> None:
-            next_theme = "light" if self.tui_config.theme == "dark" else "dark"
+            current_index = TUI_THEME_NAMES.index(self.tui_config.theme)
+            next_theme = TUI_THEME_NAMES[(current_index + 1) % len(TUI_THEME_NAMES)]
             self.set_theme(next_theme)
 
         def get_system_commands(self, screen):
@@ -193,6 +173,9 @@ if TEXTUAL_IMPORT_ERROR is None:
 
         def open_favorites(self) -> None:
             self.push_screen(FavoritesScreen(adapter=self.adapter, initial_audio=self.audio_status))
+
+        def open_watch_later(self) -> None:
+            self.push_screen(WatchLaterScreen(adapter=self.adapter, initial_audio=self.audio_status))
 
         def _dispatch(self, method_name: str, *args: Any) -> None:
             handler = getattr(self.screen, method_name, None)
@@ -238,8 +221,14 @@ if TEXTUAL_IMPORT_ERROR is None:
         def action_show_favorites(self) -> None:
             self._dispatch("show_favorites")
 
+        def action_show_watch_later(self) -> None:
+            self._dispatch("show_watch_later")
+
         def action_toggle_favorite(self) -> None:
             self._dispatch("toggle_favorite")
+
+        def action_toggle_watch_later(self) -> None:
+            self._dispatch("toggle_watch_later")
 
         def action_toggle_audio(self) -> None:
             self._dispatch("toggle_audio")
@@ -274,10 +263,11 @@ if TEXTUAL_IMPORT_ERROR is None:
 else:
 
     class BiliTerminalApp:
-        CSS_PATH = "styles/bili_dark.tcss"
-        TITLE = "BiliTerminal"
-        SUB_TITLE = "Textual v0.3.0"
-        BINDINGS = tuple(LEGACY_KEYMAP_SUMMARY)
+        CSS_PATH = APP_CSS_PATH
+        TITLE = APP_TITLE
+        SUB_TITLE = APP_SUB_TITLE
+        ENABLE_COMMAND_PALETTE = APP_ENABLE_COMMAND_PALETTE
+        BINDINGS = tuple(KEYMAP_SUMMARY)
 
         def run(self) -> None:
             raise RuntimeError(

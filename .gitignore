@@ -3,11 +3,16 @@
 .env.example
 .venv/
 npm-debug.log*
+.pytest_cache/
 __pycache__/
 *.pyc
+.tmp-*/
+:memory:
 dist/
 build/
 *.egg-info/
+.biliterminal/
+.omc/
 .omx/
 memoapp1/
 MT2.26.4.apk

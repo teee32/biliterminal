@@ -7,8 +7,19 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Footer, Header, Static
 
-from ...bilibili_cli import BilibiliAPIError
-from ..utils import AudioStatus, CommentSummary, DetailSnapshot, TextualAdapter, VideoSummary, help_text
+from ...core import BilibiliAPIError
+from ..keymap import DETAIL_HINT_TEXT
+from ..utils import (
+    AudioStatus,
+    CommentSummary,
+    DEFAULT_COMMENT_PANEL_TITLE,
+    DetailSnapshot,
+    TextualAdapter,
+    VideoSummary,
+    format_help_overlay_status,
+    format_status_text,
+    help_text,
+)
 from ..widgets import AudioBar, CommentView
 
 
@@ -42,7 +53,7 @@ class DetailScreen(Screen[bool]):
                         yield Static("", id="detail-lines")
                 with Vertical(id="detail-side-pane", classes="panel panel-side"):
                     yield Static("互动区", classes="panel-title")
-                    yield Static("j/k 滚动 · PgUp/PgDn 翻页 · a/x 音频 · f 收藏 · c 评论 · b 返回", id="detail-hint")
+                    yield Static(DETAIL_HINT_TEXT, id="detail-hint")
                     yield CommentView(id="comment-view", classes="surface-card")
         yield Static("", id="status-line")
         yield AudioBar(id="audio-bar")
@@ -61,17 +72,22 @@ class DetailScreen(Screen[bool]):
 
     def set_status(self, message: str) -> None:
         self.status_text = message
-        self.query_one("#status-line", Static).update(f"状态：{message}")
+        self.query_one("#status-line", Static).update(format_status_text(message))
 
     def _render_detail(self) -> None:
         current = self.detail_snapshot.video or self.video
-        star = "★ " if self.detail_snapshot.favorite else ""
-        self.query_one("#detail-title", Static).update(f"{star}{current.title}")
+        markers = "".join(
+            (
+                "★ " if self.detail_snapshot.favorite else "",
+                "⏳ " if current.watch_later else "",
+            )
+        )
+        self.query_one("#detail-title", Static).update(f"{markers}{current.title}" if markers else current.title)
         self.query_one("#detail-meta", Static).update(
             f"UP主 {current.author}  ·  播放 {current.play_label}  ·  发布 {current.published_label}  ·  稿件 {current.ref_label}"
         )
         self.query_one("#detail-lines", Static).update("\n".join(self.detail_snapshot.lines))
-        comment_title = "评论预览"
+        comment_title = DEFAULT_COMMENT_PANEL_TITLE
         empty_message = self.detail_snapshot.comments_error or "按 c 刷新评论预览"
         self.query_one(CommentView).set_comments(
             list(self.detail_snapshot.comments),
@@ -123,6 +139,16 @@ class DetailScreen(Screen[bool]):
         self.should_refresh_parent = True
         self._load_detail(set_status=False)
         self.set_status(f"{'已收藏' if is_added else '已取消收藏'}: {self.video.title}")
+
+    def toggle_watch_later(self) -> None:
+        try:
+            is_added = self.adapter.toggle_watch_later(self.video)
+        except BilibiliAPIError as exc:
+            self.set_status(str(exc))
+            return
+        self.should_refresh_parent = True
+        self._load_detail(set_status=False)
+        self.set_status(f"{'已加入稍后看' if is_added else '已移出稍后看'}: {self.video.title}")
 
     def toggle_audio(self) -> None:
         status = self.adapter.toggle_audio(self.video)
@@ -180,4 +206,4 @@ class DetailScreen(Screen[bool]):
         self.help_visible = not self.help_visible
         overlay = self.query_one("#help-overlay", Static)
         overlay.set_class(not self.help_visible, "hidden")
-        self.set_status("帮助浮层已打开" if self.help_visible else "帮助浮层已关闭")
+        self.set_status(format_help_overlay_status(self.help_visible))

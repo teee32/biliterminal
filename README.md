@@ -1,18 +1,18 @@
 # BiliTerminal
 
-一个以 **Textual v0.3 UI** 为主的终端 Bilibili 客户端。
+一个 **Textual TUI-only** 的终端 Bilibili 客户端。
 
 适合上班空隙快速看首页、刷分区排行、搜中文视频、翻评论、顺手先收藏，等有空了再去网页端继续看。
 
-当前主界面与后续演进方向都围绕 **Textual**：
+当前主界面与后续演进方向都围绕 **Textual**，仓库不再暴露旧命令行浏览器或旧终端 UI：
 
-- **Textual v0.3 UI**：首页内容流、搜索、详情页、评论预览、历史/收藏、主题切换、帮助浮层
+- **Textual v0.3 UI**：首页内容流、搜索、详情页、评论预览、历史、收藏、稍后看、主题切换、帮助浮层
 - **macOS `.app` 双击版**：默认直接进入 Textual
-- **legacy curses TUI**：仅作为兼容 fallback 保留，不再作为 README 重点展示
+- **本地持久化**：历史、收藏、稍后看与主题配置都保存在本机，不自动同步
 
 ## 快速启动
 
-最推荐：直接进入 Textual。
+默认直接进入 Textual。
 
 macOS 双击版：
 
@@ -23,37 +23,16 @@ macOS 双击版：
 
 ```bash
 git clone https://github.com/teee32/biliterminal.git && cd biliterminal
-./biliterminal textual
-# 或
+python3 -m pip install -e .
+./biliterminal
 ./biliterminal --tui
 ```
 
 模块入口：
 
 ```bash
-python3 -m bili_terminal textual
+python3 -m bili_terminal
 python3 -m bili_terminal --tui
-```
-
-兼容 fallback（legacy curses）仍然保留：
-
-```bash
-./biliterminal
-./biliterminal --legacy-tui
-python3 -m bili_terminal tui
-python3 -m bili_terminal --legacy-tui
-```
-
-直接使用功能命令：
-
-```bash
-./biliterminal recommend -n 5
-./biliterminal rank music --day 7
-./biliterminal bangumi 番剧 --index -n 5
-./biliterminal search 中文 -n 5
-./biliterminal audio BV19K9uBmEdx
-./biliterminal favorite BV19K9uBmEdx
-./biliterminal comments BV19K9uBmEdx -n 3
 ```
 
 自己构建 macOS 双击版：
@@ -90,49 +69,29 @@ open dist/BiliTerminal.app
 - 首页推荐流
 - 热门视频列表
 - 入站必刷列表
-- 分区排行榜：`rank` / `ranking`
-- 番剧 / 国创 / 影视：`bangumi`
+- 分区排行榜
+- 番剧 / 国创 / 影视
 - 关键词搜索
 - 首页热搜词
 - 视频详情查看
 - 视频评论预览
 - 从终端直接打开浏览器页面
-- 本地收藏夹，支持稍后从浏览器继续看
+- 本地收藏夹
+- 本地稍后看队列：手动加入、手动移出，不自动同步
 - 最近搜索与最近浏览历史
-- 交互式 REPL，支持基于上一次列表结果按序号继续操作
 - Textual 全屏 UI：支持首页推荐流、分区切换、搜索、详情页、评论预览、历史、收藏、帮助浮层
-- Textual 主题切换：`Ctrl+T / F2`，并写回 `~/.biliterminal/config.toml`
+- Textual 主题切换：`Ctrl+T / F2` 在 dark / light / claude 间循环，并写回 `~/.biliterminal/config.toml`
 - 命令面板入口：`Theme` / `Keys`
 - TUI 搜索框支持直接输入中文关键词
 
 ## 运行
 
-项目文件已经集中在 `bili_terminal/` 目录下，直接运行目录内的脚本即可。
+仓库根目录包装脚本、模块入口和安装后的 `biliterminal` 命令共享同一套 Textual 启动语义。
 
 ```bash
-python3 bili_terminal/bilibili_cli.py hot -n 5
-python3 bili_terminal/bilibili_cli.py recommend -n 5
-python3 bili_terminal/bilibili_cli.py rank --rid 3 --day 7
-python3 bili_terminal/bilibili_cli.py bangumi 番剧 --index -n 5
-python3 bili_terminal/bilibili_cli.py precious -n 5
-python3 bili_terminal/bilibili_cli.py trending -n 10
-python3 bili_terminal/bilibili_cli.py search 原神 -n 5
-python3 bili_terminal/bilibili_cli.py audio BV19K9uBmEdx
-python3 bili_terminal/bilibili_cli.py audio pause
-python3 bili_terminal/bilibili_cli.py audio resume
-python3 bili_terminal/bilibili_cli.py audio stop
-python3 bili_terminal/bilibili_cli.py video BV1xx411c7mu
-python3 bili_terminal/bilibili_cli.py favorite BV19K9uBmEdx
-python3 bili_terminal/bilibili_cli.py favorites
-python3 bili_terminal/bilibili_cli.py favorites open 1
-python3 bili_terminal/bilibili_cli.py favorites remove 1
-python3 bili_terminal/bilibili_cli.py history
-python3 bili_terminal/bilibili_cli.py repl
-python3 bili_terminal/bilibili_cli.py tui
-python3 -m bili_terminal recommend -n 5
-python3 -m bili_terminal rank music --day 7
-python3 -m bili_terminal bangumi 番剧 --index -n 5
-python3 -m bili_terminal textual
+./biliterminal
+./bili_terminal/start.sh
+python3 -m bili_terminal
 python3 -m unittest discover -s bili_terminal/tests -v
 ```
 
@@ -170,22 +129,6 @@ open dist/BiliTerminal.app
 - 当前发行物是**本机架构构建**；如果你要同时覆盖 Intel Mac 和 Apple Silicon，建议分别验证或单独做双架构发布
 - 构建脚本现在会在打包后自动做一次 `launch.command --help` 烟测，确认优先走包内 runtime，而不是回退到系统 `python3`
 
-## REPL 示例
-
-```text
-$ python3 bili_terminal/bilibili_cli.py repl
-bili> hot 1 5
-bili> audio 1
-bili> audio pause
-bili> audio stop
-bili> favorite 1
-bili> favorites
-bili> favorites open 1
-bili> video 1
-bili> open 1
-bili> search 原神 1 5
-```
-
 ## TUI 快捷键
 
 - `↑/↓` 或 `j/k`：移动选中项
@@ -201,10 +144,12 @@ bili> search 原神 1 5
 - `h`：切回首页内容流
 - `v`：切到最近浏览
 - `m`：切到收藏夹
+- `w`：切到稍后看队列
+- `Shift+W`：加入 / 移出稍后看
 - `f`：收藏 / 取消收藏当前视频
 - `a`：播放 / 暂停当前视频音频
 - `x`：停止当前音频
-- `Ctrl+T`：深色 / 浅色主题即时切换（并写回 `~/.biliterminal/config.toml`）
+- `Ctrl+T`：深色 / 浅色 / Claude 主题即时切换（并写回 `~/.biliterminal/config.toml`）
 - `n/p`：翻页
 - `PgUp/PgDn`：在详情页滚动
 - `o`：浏览器打开当前视频
@@ -213,38 +158,41 @@ bili> search 原神 1 5
 - `?`：显示帮助浮层
 - `q`：退出
 
-## Textual v0.3.0
+## Textual v0.3.1
 
-当前仓库已经完成 Textual 版主流程，在**不破坏现有 CLI / legacy curses TUI** 的前提下提供：
+v0.3.1 在 v0.3 基础上做了两项打磨：
 
-- 发布策略：默认 shell 启动仍走 legacy curses TUI，`textual` / `new-tui` 显式进入新 UI，`legacy-tui` / `--legacy-tui` 作为强制 fallback 保留
-- 统一入口：`python3 -m bili_terminal ...`、仓库根目录 `./biliterminal`、以及 `bili_terminal/start.sh` 共享同一套 launch 语义
-- 安装后入口：`python3 -m pip install -e .` 会注册 `biliterminal` 命令，保持与仓库脚本一致的参数行为
-- 完整 Screen 流：`HomeScreen`、`SearchScreen`、`DetailScreen`、`HistoryScreen`、`FavoritesScreen`
+- Claude 主题重新对齐 `claude.ai` 的暖米色调（三档：`#f0ede4` 底 / `#f5f2ea` 卡片 / `#e6e2d6` 顶底栏），强调色改为 Anthropic 橙棕 `#c96442`；同时为三个主题各自上色滚动条、Tooltip、LoadingIndicator，避免切到亮色主题时露出深色默认样式
+- 修复 `Shift+W` 切换稍后看的快捷键无效（终端不会为字母键发独立 shift modifier，绑定从 `shift+w` 改成 `W`，用户文档里的 `Shift+W` 物理描述不变）
+
+当前仓库已经收束为 Textual-only：
+
+- 发布策略：默认 shell、模块入口、安装后命令和 macOS `.app` 都直接启动新版 Textual TUI
+- 统一入口：`python3 -m bili_terminal`、仓库根目录 `./biliterminal`、以及 `bili_terminal/start.sh` 共享同一套启动语义
+- 安装后入口：`python3 -m pip install -e .` 会注册 `biliterminal` 命令
+- 完整 Screen 流：`HomeScreen`、`SearchScreen`、`DetailScreen`、`HistoryScreen`、`FavoritesScreen`、`WatchLaterScreen`
 - 统一 Widget：`VideoList`、`CommentView`、`AudioBar`
-- 保留原键位语义：`↑/↓ / j/k`、`Enter`、`Esc/b`、`/ / s`、`Tab/Shift+Tab`、`1-9 / 0`、`l`、`d`、`h`、`v`、`m`、`f`、`a`、`x`、`n/p`、`PgUp/PgDn`、`o`、`c`、`r`、`?`、`q`
+- 键位语义：`↑/↓ / j/k`、`Enter`、`Esc/b`、`/ / s`、`Tab/Shift+Tab`、`1-9 / 0`、`l`、`d`、`h`、`v`、`m`、`w`、`Shift+W`、`f`、`a`、`x`、`n/p`、`PgUp/PgDn`、`o`、`c`、`r`、`?`、`q`
 - 主题菜单与帮助菜单：命令面板 `Ctrl+P` 可直接进入 `Theme` / `Keys`
 - 结构说明：[`docs/textual-phase1-architecture.md`](docs/textual-phase1-architecture.md)
-- 兼容约束：现有 `python3 -m bili_terminal tui`、`./bili_terminal/start.sh`、macOS `.app` 打包继续保留
-- 入口语义：`tui` 仍然是 legacy curses；`textual` / `new-tui` / `--tui` 才是新版 Textual UI；macOS `.app` 默认双击启动新版 Textual
 
 启动方式：
 
 ```bash
-python3 -m bili_terminal textual
-./biliterminal textual
-./bili_terminal/start.sh textual
+python3 -m bili_terminal
+./biliterminal
+./bili_terminal/start.sh
 ```
 
 主题配置（热重载）：
 
 - 配置文件：`~/.biliterminal/config.toml`
-- TUI 内可直接按 `Ctrl+T` 在 `dark / light` 间切换，切换后会立刻重载并持久化到配置文件
+- TUI 内可直接按 `Ctrl+T` 在 `dark / light / claude` 间切换，切换后会立刻重载并持久化到配置文件
 - 示例：
 
 ```toml
 [ui]
-theme = "light"  # dark / light
+theme = "claude"  # dark / light / claude
 ```
 
 ## 测试
@@ -261,14 +209,14 @@ README 截图可通过下面的脚本重新生成：
 
 ## 说明
 
-- CLI 会为接口补齐浏览器请求头，降低被风控 412 的概率。
-- 仓库内直接运行时，搜索词和最近浏览视频会落到 `.omx/state/bilibili-cli-history.json`。
-- 双击版会把历史写到 `~/.biliterminal/state/bilibili-cli-history.json`，并把启动日志写到 `~/.biliterminal/launcher.log`。
+- Core 层会为接口补齐浏览器请求头，降低被风控 412 的概率。
+- 仓库内直接运行时，搜索词和最近浏览视频会落到 `.biliterminal/state/biliterminal-history.json`。
+- 双击版会把历史写到 `~/.biliterminal/state/biliterminal-history.json`，并把启动日志写到 `~/.biliterminal/launcher.log`。
 - 音频播放优先使用 `mpv` 或 `ffplay` 直连；macOS 上如果都没装，会自动走后台下载后用原生无窗体 audio helper 播放，只有 helper 不可用时才回退到 `afplay`。
-- TUI 里 `a` 是当前视频的播放 / 暂停切换，`x` 会直接停止当前音频；CLI / REPL 里也支持 `audio pause`、`audio resume`、`audio stop`。
+- TUI 里 `a` 是当前视频的播放 / 暂停切换，`x` 会直接停止当前音频。
 - 这是一个偏“轻量摸鱼”场景的终端浏览器，不是下载器，也没有实现登录态、投稿、评论发送、弹幕发送等需要更高权限的功能。
 - 目前默认聚焦视频内容，不处理直播、课程、专栏、动态等其他内容类型。
-- 终端版已经接入首页推荐、热搜、默认搜索词、入站必刷与分区榜单，但因为 curses 终端没有图片、瀑布流和登录态组件，所以还不是官网像素级复刻。
+- Textual 版已经接入首页推荐、热搜、默认搜索词、入站必刷与分区榜单，但终端环境没有完整网页图片瀑布流和登录态组件，所以不是官网像素级复刻。
 
 ## 致谢
 

@@ -6,7 +6,7 @@ from bili_terminal.__main__ import main
 
 
 def run() -> int:
-    args = sys.argv[1:] or ["--tui"]
+    args = sys.argv[1:]
     return main(args)
 
 

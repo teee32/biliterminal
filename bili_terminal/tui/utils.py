@@ -4,9 +4,9 @@ from dataclasses import dataclass, field
 import os
 from pathlib import Path
 import tomllib
-from typing import Literal
+from typing import Literal, cast
 
-from ..bilibili_cli import (
+from ..core import (
     HOME_CHANNELS,
     AudioPlaybackState,
     BilibiliAPIError,
@@ -23,11 +23,27 @@ from ..bilibili_cli import (
     normalize_keyword,
     stop_audio_playback,
 )
+from .keymap import HELP_LINES, SEARCH_PLACEHOLDER_TEXT
+
+TuiTheme = Literal["dark", "light", "claude"]
+TUI_THEME_NAMES: tuple[TuiTheme, ...] = ("dark", "light", "claude")
+THEME_LABELS: dict[str, str] = {
+    "dark": "深色",
+    "light": "浅色",
+    "claude": "Claude",
+}
+
+
+def normalize_tui_theme(theme: str | None) -> TuiTheme:
+    normalized = str(theme or "dark").strip().lower()
+    if normalized in TUI_THEME_NAMES:
+        return cast(TuiTheme, normalized)
+    return "dark"
 
 
 @dataclass(slots=True, frozen=True)
 class TuiConfig:
-    theme: Literal["dark", "light"] = "dark"
+    theme: TuiTheme = "dark"
     path: str | None = None
     mtime: float | None = None
 
@@ -50,48 +66,61 @@ def load_tui_config(path: str | None = None) -> TuiConfig:
         return TuiConfig(path=str(config_path), mtime=config_path.stat().st_mtime)
     ui = payload.get("ui") if isinstance(payload, dict) else {}
     theme = "dark"
-    if isinstance(ui, dict) and str(ui.get("theme", "dark")).lower() == "light":
-        theme = "light"
+    if isinstance(ui, dict):
+        theme = normalize_tui_theme(str(ui.get("theme", "dark")))
     return TuiConfig(theme=theme, path=str(config_path), mtime=config_path.stat().st_mtime)
 
 
-def save_tui_config(theme: Literal["dark", "light"], path: str | None = None) -> TuiConfig:
+def save_tui_config(theme: TuiTheme, path: str | None = None) -> TuiConfig:
     resolved = path or default_tui_config_path()
     config_path = Path(resolved)
     config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(f'[ui]\ntheme = "{theme}"\n', encoding="utf-8")
+    config_path.write_text(f'[ui]\ntheme = "{normalize_tui_theme(theme)}"\n', encoding="utf-8")
     return load_tui_config(str(config_path))
 
-DEFAULT_SEARCH_PLACEHOLDER = "按 / 或 s 搜索，支持中文实时输入"
-DEFAULT_STATUS_TEXT = "Textual v0.3.0 已启动；当前保留原键位语义与页面结构。"
+DEFAULT_SEARCH_PLACEHOLDER = SEARCH_PLACEHOLDER_TEXT
+DEFAULT_STATUS_TEXT = "Textual v0.3.1 已启动；当前保留原键位语义与页面结构。"
 DEFAULT_AUDIO_STATUS = "音频控制栏已就位，正在复用现有 audio 播放链路。"
 DEFAULT_COMMENT_PLACEHOLDER = "评论区已预留；按 c 可加载热评，异常时会在此处直接提示。"
+DEFAULT_COMMENT_PANEL_TITLE = "评论预览"
+DEFAULT_COMMENT_PREVIEW_EMPTY_MESSAGE = "按 c 加载评论预览"
+DEFAULT_NO_VISIBLE_VIDEO_MESSAGE = "当前没有可展示的视频"
+DEFAULT_NO_RECENT_SEARCH_STATUS = "没有最近搜索记录"
+DEFAULT_NO_DEFAULT_SEARCH_STATUS = "当前没有默认搜索词"
+DEFAULT_DEFAULT_SEARCH_LOAD_FAILED_PREFIX = "默认搜索词加载失败:"
+DEFAULT_EMPTY_RECENT_SEARCHES_TEXT = "暂无"
 
-HELP_LINES = [
-    "↑/↓ / j/k 移动",
-    "Enter 详情",
-    "Esc / b 返回",
-    "/ / s 搜索",
-    "Tab / Shift+Tab 切换分区",
-    "1-9 / 0 直选分区",
-    "l 最近搜索",
-    "d 默认搜索词",
-    "h 首页",
-    "v 历史",
-    "m 收藏夹",
-    "f 收藏",
-    "a 播放/暂停",
-    "x 停止",
-    "n / p 翻页",
-    "PgUp / PgDn 详情滚动",
-    "o 浏览器打开",
-    "c 评论",
-    "r 刷新",
-    "Ctrl+T / F2 切换主题",
-    "? 帮助",
-    "q 退出",
-]
 
+def format_recent_searches_text(keywords: list[str], *, empty_text: str = DEFAULT_EMPTY_RECENT_SEARCHES_TEXT) -> str:
+    recent = " / ".join(keywords) or empty_text
+    return f"最近搜索: {recent}"
+
+
+def format_search_title(keyword: str, page: int) -> str:
+    return f"搜索: {keyword} · 第 {page} 页"
+
+
+def format_status_text(message: str) -> str:
+    return f"状态：{message}"
+
+
+def format_help_overlay_status(is_open: bool) -> str:
+    return "帮助浮层已打开" if is_open else "帮助浮层已关闭"
+
+
+def format_no_video_status(action: str) -> str:
+    return f"当前没有可{action}的视频"
+
+
+def theme_label(theme: str) -> str:
+    return THEME_LABELS[normalize_tui_theme(theme)]
+
+
+def format_theme_status_message(theme: str, source: str, *, unchanged: bool = False) -> str:
+    label = theme_label(theme)
+    if unchanged:
+        return f"当前已是{label}主题（{source}）"
+    return f"主题已切换为 {label}（{source}）"
 
 @dataclass(slots=True, frozen=True)
 class ChannelSpec:
@@ -115,6 +144,7 @@ class VideoSummary:
     bvid: str | None = None
     aid: int | None = None
     favorite: bool = False
+    watch_later: bool = False
     published_label: str = "-"
     stat_line: str = ""
     ref_label: str = "-"
@@ -132,7 +162,7 @@ class CommentSummary:
 
 @dataclass(slots=True, frozen=True)
 class FeedSnapshot:
-    mode: Literal["home", "search", "history", "favorites"]
+    mode: Literal["home", "search", "history", "favorites", "watch_later"]
     title: str
     videos: tuple[VideoSummary, ...]
     empty_message: str
@@ -158,7 +188,7 @@ class AudioStatus:
 
 
 class TextualAdapter:
-    """Small bridge that exposes existing CLI logic in Textual-friendly shapes."""
+    """Small bridge that exposes core Bilibili logic in Textual-friendly shapes."""
 
     def __init__(
         self,
@@ -214,7 +244,7 @@ class TextualAdapter:
         self.history_store.add_keyword(cleaned)
         return FeedSnapshot(
             mode="search",
-            title=f"搜索: {cleaned}  第 {page} 页",
+            title=format_search_title(cleaned, page),
             videos=tuple(self.video_summary(item) for item in items),
             empty_message=f"没有找到与“{cleaned}”相关的视频。",
             page=page,
@@ -237,6 +267,15 @@ class TextualAdapter:
             title="收藏夹",
             videos=tuple(self.video_summary(item) for item in items),
             empty_message="收藏夹还是空的。",
+        )
+
+    def watch_later(self, *, limit: int | None = None) -> FeedSnapshot:
+        items = self.history_store.get_watch_later_videos(limit)
+        return FeedSnapshot(
+            mode="watch_later",
+            title="稍后看队列",
+            videos=tuple(self.video_summary(item) for item in items),
+            empty_message="稍后看队列还是空的。",
         )
 
     def detail(self, video: VideoSummary | VideoItem | None, *, width: int = 56, comment_limit: int = 4) -> DetailSnapshot:
@@ -275,17 +314,43 @@ class TextualAdapter:
     def toggle_favorite(self, video: VideoSummary | VideoItem | None) -> bool:
         item = self._resolve_item(video)
         if item is None:
-            raise BilibiliAPIError("当前没有可收藏的视频")
+            raise BilibiliAPIError(format_no_video_status("收藏"))
         return self.history_store.toggle_favorite(item)
 
     def is_favorite(self, video: VideoSummary | VideoItem | None) -> bool:
         item = self._resolve_item(video)
         return self.history_store.is_favorite(item)
 
+    def add_watch_later(self, video: VideoSummary | VideoItem | None) -> bool:
+        item = self._resolve_item(video)
+        if item is None:
+            raise BilibiliAPIError(format_no_video_status("加入稍后看"))
+        return self.history_store.add_watch_later(item)
+
+    def remove_watch_later(self, video: VideoSummary | VideoItem | None) -> bool:
+        item = self._resolve_item(video)
+        if item is None:
+            raise BilibiliAPIError(format_no_video_status("移出稍后看"))
+        return self.history_store.remove_watch_later(item)
+
+    def toggle_watch_later(self, video: VideoSummary | VideoItem | None) -> bool:
+        item = self._resolve_item(video)
+        if item is None:
+            raise BilibiliAPIError(format_no_video_status("加入稍后看"))
+        return self.history_store.toggle_watch_later(item)
+
+    def is_watch_later(self, video: VideoSummary | VideoItem | None) -> bool:
+        item = self._resolve_item(video)
+        return self.history_store.is_watch_later(item)
+
     def toggle_audio(self, video: VideoSummary | VideoItem | None) -> AudioStatus:
         item = self._resolve_item(video)
         if item is None:
-            return AudioStatus(now_playing="未播放", state="stopped", status_message="当前没有可播放音频的视频")
+            return AudioStatus(
+                now_playing="未播放",
+                state="stopped",
+                status_message=format_no_video_status("播放音频"),
+            )
         self.history_store.add_video(item)
         message = audio_action_for_item(self.client, item)
         return self.current_audio_status(default_title=item.title, fallback_message=message)
@@ -357,6 +422,7 @@ def video_summary_from_item(item: VideoItem, *, history_store: HistoryStore | No
         bvid=item.bvid,
         aid=item.aid,
         favorite=history_store.is_favorite(item) if history_store is not None else False,
+        watch_later=history_store.is_watch_later(item) if history_store is not None else False,
         published_label=format_timestamp(item.pubdate),
         stat_line=(
             f"播放 {human_count(item.play)} · 弹幕 {human_count(item.danmaku)} · "
@@ -424,7 +490,7 @@ def placeholder_comments(video: VideoSummary | None) -> list[CommentSummary]:
     return [
         CommentSummary("热评 1", f"{subject}：评论区骨架已保留，阶段 2 会接入真实热评。", "👍 2048 · 10 分钟前"),
         CommentSummary("热评 2", "评论 View 已拆成独立 widget，方便后续复用现有 comments() 数据流。", "👍 512 · 42 分钟前"),
-        CommentSummary("热评 3", "阶段 1 只做布局和交互外壳，不改当前 CLI / curses 业务逻辑。", "👍 256 · 1 小时前"),
+        CommentSummary("热评 3", "Textual 视图复用 core 层的数据、评论和音频链路。", "👍 256 · 1 小时前"),
     ]
 
 

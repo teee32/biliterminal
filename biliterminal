@@ -13,11 +13,11 @@ if [ -x "$ROOT_DIR/.venv/bin/python" ]; then
 fi
 
 if [ "$#" -eq 0 ]; then
-  exec "$PYTHON_BIN" -m bili_terminal --legacy-tui
+  exec "$PYTHON_BIN" -m bili_terminal --tui
 fi
 
 case "$1" in
-  textual|new-tui|--tui|legacy-tui|--legacy-tui)
+  textual|new-tui|tui|--tui)
     exec "$PYTHON_BIN" -m bili_terminal "$@"
     ;;
 esac

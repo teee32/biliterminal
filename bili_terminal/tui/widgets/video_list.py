@@ -108,7 +108,13 @@ class VideoList(ListView):
 
     def _render_item(self, video: VideoSummary) -> str:
         width = max(26, (self.size.width or 64) - 8)
-        title = f"★ {video.title}" if video.favorite else video.title
+        markers = "".join(
+            (
+                "★ " if video.favorite else "",
+                "⏳ " if video.watch_later else "",
+            )
+        )
+        title = f"{markers}{video.title}" if markers else video.title
         title_lines = self._wrap(title, width=width, max_lines=2)
         description = " ".join(video.description.split()) or "暂无简介"
         description_lines = self._wrap(description, width=width, max_lines=1)

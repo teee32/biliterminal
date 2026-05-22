@@ -1,4 +1,4 @@
-"""Reusable Textual widgets for the staged BiliTerminal UI."""
+"""Reusable Textual widgets for BiliTerminal."""
 
 from .audio_bar import AudioBar
 from .comment_view import CommentView

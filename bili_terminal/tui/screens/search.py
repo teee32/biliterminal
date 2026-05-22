@@ -3,7 +3,16 @@ from __future__ import annotations
 from textual import on
 from textual.widgets import Input
 
-from ..utils import FeedSnapshot, TextualAdapter
+from ..keymap import SEARCH_EMPTY_PROMPT_TEXT, SEARCH_SUBTITLE_TEXT
+from ..utils import (
+    DEFAULT_DEFAULT_SEARCH_LOAD_FAILED_PREFIX,
+    DEFAULT_NO_DEFAULT_SEARCH_STATUS,
+    DEFAULT_NO_RECENT_SEARCH_STATUS,
+    FeedSnapshot,
+    TextualAdapter,
+    format_search_title,
+    format_recent_searches_text,
+)
 from .home import BaseFeedScreen
 
 
@@ -17,19 +26,18 @@ class SearchScreen(BaseFeedScreen):
 
     def screen_title(self) -> str:
         if self.keyword:
-            return f"搜索: {self.keyword} · 第 {self.page} 页"
+            return format_search_title(self.keyword, self.page)
         return "搜索"
 
     def subtitle_text(self) -> str:
-        return "支持中文实时输入 · Enter 执行搜索 · l 最近搜索 · d 默认搜索词"
+        return SEARCH_SUBTITLE_TEXT
 
     def meta_text(self) -> str:
-        recent = " / ".join(self.adapter.recent_keywords(5)) or "暂无"
-        return f"最近搜索: {recent}"
+        return format_recent_searches_text(self.adapter.recent_keywords(5))
 
     def fetch_snapshot(self) -> FeedSnapshot:
         if not self.keyword.strip():
-            return self.make_empty_snapshot("请输入关键词后按 Enter 开始搜索")
+            return self.make_empty_snapshot(SEARCH_EMPTY_PROMPT_TEXT)
         return self.adapter.search(self.keyword, page=self.page, page_size=self.PAGE_SIZE)
 
     def on_mount(self) -> None:
@@ -53,7 +61,7 @@ class SearchScreen(BaseFeedScreen):
         cleaned = keyword.strip()
         if not cleaned:
             self.keyword = ""
-            self.snapshot = self.make_empty_snapshot("请输入关键词后按 Enter 开始搜索")
+            self.snapshot = self.make_empty_snapshot(SEARCH_EMPTY_PROMPT_TEXT)
             self.query_one(Input).value = ""
             self.load_feed(set_status=False)
             self.set_status("请输入有效关键词")
@@ -77,7 +85,7 @@ class SearchScreen(BaseFeedScreen):
     def rerun_last_search(self) -> None:
         keywords = self.adapter.recent_keywords(1)
         if not keywords:
-            self.set_status("没有最近搜索记录")
+            self.set_status(DEFAULT_NO_RECENT_SEARCH_STATUS)
             return
         self.execute_search(keywords[0])
 
@@ -85,10 +93,10 @@ class SearchScreen(BaseFeedScreen):
         try:
             keyword = self.adapter.default_search_keyword()
         except Exception as exc:
-            self.set_status(f"默认搜索词加载失败: {exc}")
+            self.set_status(f"{DEFAULT_DEFAULT_SEARCH_LOAD_FAILED_PREFIX} {exc}")
             return
         if not keyword:
-            self.set_status("当前没有默认搜索词")
+            self.set_status(DEFAULT_NO_DEFAULT_SEARCH_STATUS)
             return
         self.execute_search(keyword)
 

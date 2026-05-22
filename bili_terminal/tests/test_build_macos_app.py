@@ -12,7 +12,7 @@ from pathlib import Path
 
 
 class BuildMacOSAppScriptTests(unittest.TestCase):
-    def test_build_script_packages_textual_tree_and_legacy_entrypoints(self) -> None:
+    def test_build_script_packages_textual_tree_and_runtime_entrypoints(self) -> None:
         repo_root = Path(__file__).resolve().parents[2]
         package_root = repo_root / "bili_terminal"
 
@@ -119,7 +119,7 @@ class BuildMacOSAppScriptTests(unittest.TestCase):
             info_plist = temp_root / "dist" / "BiliTerminal.app" / "Contents" / "Info.plist"
             smoke_log = temp_root / "build" / "macos-app" / "smoke-home" / "launcher.log"
             self.assertTrue((payload_dir / "__main__.py").is_file())
-            self.assertTrue((payload_dir / "bilibili_cli.py").is_file())
+            self.assertTrue((payload_dir / "core.py").is_file())
             self.assertTrue((payload_dir / "macos" / "biliterminal_audio_helper.m").is_file())
             self.assertTrue((payload_dir / "biliterminal-audio-helper").is_file())
             self.assertTrue((runtime_dir / "BiliTerminal").is_file())
@@ -148,7 +148,7 @@ class BuildMacOSAppScriptTests(unittest.TestCase):
             with info_plist.open("rb") as handle:
                 info = plistlib.load(handle)
             self.assertEqual(info["CFBundleIdentifier"], "io.github.teee32.biliterminal")
-            self.assertEqual(info["CFBundleShortVersionString"], "0.3.0")
+            self.assertEqual(info["CFBundleShortVersionString"], "0.3.1")
             self.assertNotIn("NSCameraUsageDescription", info)
             self.assertTrue(smoke_log.is_file())
             smoke_text = smoke_log.read_text(encoding="utf-8")

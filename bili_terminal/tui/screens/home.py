@@ -9,8 +9,27 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
 from textual.widgets import Footer, Header, Input, ListItem, ListView, Static
 
-from ...bilibili_cli import BilibiliAPIError, channel_shortcut_index_from_key
-from ..utils import AudioStatus, DEFAULT_SEARCH_PLACEHOLDER, DEFAULT_STATUS_TEXT, FeedSnapshot, TextualAdapter, help_text
+from ...core import BilibiliAPIError, channel_shortcut_index_from_key
+from ..keymap import HOME_FEED_HINT_TEXT, HOME_SIDEBAR_INTRO_TEXT, HOME_SUBTITLE_TEXT
+from ..utils import (
+    AudioStatus,
+    DEFAULT_COMMENT_PANEL_TITLE,
+    DEFAULT_COMMENT_PREVIEW_EMPTY_MESSAGE,
+    DEFAULT_DEFAULT_SEARCH_LOAD_FAILED_PREFIX,
+    DEFAULT_EMPTY_RECENT_SEARCHES_TEXT,
+    DEFAULT_NO_DEFAULT_SEARCH_STATUS,
+    DEFAULT_NO_VISIBLE_VIDEO_MESSAGE,
+    DEFAULT_NO_RECENT_SEARCH_STATUS,
+    DEFAULT_SEARCH_PLACEHOLDER,
+    DEFAULT_STATUS_TEXT,
+    FeedSnapshot,
+    TextualAdapter,
+    format_no_video_status,
+    format_help_overlay_status,
+    format_status_text,
+    format_recent_searches_text,
+    help_text,
+)
 from ..widgets import AudioBar, CommentView, VideoList
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -55,7 +74,7 @@ class BaseFeedScreen(Screen[bool | None]):
                 if self.SHOW_SIDEBAR:
                     with Vertical(id="sidebar-pane", classes="panel panel-side"):
                         yield Static("主站导航", classes="panel-title")
-                        yield Static("Tab / Shift+Tab 切换分区\n1-9 / 0 快速直达", id="sidebar-intro")
+                        yield Static(HOME_SIDEBAR_INTRO_TEXT, id="sidebar-intro")
                         yield ListView(
                             *(ListItem(Static(self._channel_label(index), classes="channel-item")) for index in range(len(self.adapter.channels))),
                             id="channel-list",
@@ -96,7 +115,7 @@ class BaseFeedScreen(Screen[bool | None]):
 
     def make_empty_snapshot(self, empty_message: str) -> FeedSnapshot:
         return FeedSnapshot(
-            mode=self.MODE_KIND if self.MODE_KIND in {"home", "search", "history", "favorites"} else "home",
+            mode=self.MODE_KIND if self.MODE_KIND in {"home", "search", "history", "favorites", "watch_later"} else "home",
             title=self.screen_title(),
             videos=(),
             empty_message=empty_message,
@@ -111,17 +130,20 @@ class BaseFeedScreen(Screen[bool | None]):
             "search": "搜索",
             "history": "最近浏览",
             "favorites": "收藏夹",
+            "watch_later": "稍后看队列",
         }.get(self.MODE_KIND, "BiliTerminal")
 
     def subtitle_text(self) -> str:
-        return "按 Tab / Shift+Tab / 1-9 / 0 快速切换分区"
+        return f"按 {HOME_SUBTITLE_TEXT}"
 
     def banner_text(self) -> str:
         return ""
 
     def meta_text(self) -> str:
-        recent = " / ".join(self.adapter.recent_keywords(3)) or "暂无"
-        return f"最近搜索: {recent}"
+        return format_recent_searches_text(self.adapter.recent_keywords(3))
+
+    def feed_hint_text(self) -> str:
+        return HOME_FEED_HINT_TEXT
 
     def fetch_snapshot(self) -> FeedSnapshot:
         raise NotImplementedError
@@ -160,7 +182,7 @@ class BaseFeedScreen(Screen[bool | None]):
 
     def set_status(self, message: str) -> None:
         self.status_text = message
-        self.query_one("#status-line", Static).update(f"状态：{message}")
+        self.query_one("#status-line", Static).update(format_status_text(message))
 
     def apply_audio_status(self, status: AudioStatus) -> None:
         self.query_one(AudioBar).set_audio_status(status)
@@ -177,16 +199,14 @@ class BaseFeedScreen(Screen[bool | None]):
         if self.ALLOW_PAGING:
             section_title += f" · 第 {self.page} 页"
         self.query_one("#feed-section-title", Static).update(section_title)
-        self.query_one("#feed-section-hint", Static).update(
-            "j/k 移动 · Enter 详情 · c 评论 · o 浏览器 · f 收藏 · a/x 音频"
-        )
+        self.query_one("#feed-section-hint", Static).update(self.feed_hint_text())
 
     def _refresh_preview(self, video) -> None:
         detail = self.query_one("#detail-summary", Static)
         comments = self.query_one(CommentView)
         if video is None:
             detail.update(self.snapshot.empty_message)
-            comments.set_comments([], title="评论预览", empty_message="当前没有可展示的视频")
+            comments.set_comments([], title=DEFAULT_COMMENT_PANEL_TITLE, empty_message=DEFAULT_NO_VISIBLE_VIDEO_MESSAGE)
             return
 
         cache_key = self._video_key(video)
@@ -198,9 +218,9 @@ class BaseFeedScreen(Screen[bool | None]):
             comments.set_comments(comment_items, title=title, empty_message=empty_message)
             return
 
-        star = "★ " if video.favorite else ""
+        star = "".join(("★ " if video.favorite else "", "⏳ " if video.watch_later else ""))
         lines = [
-            f"{star}{video.title}",
+            f"{star}{video.title}" if star else video.title,
             f"UP主: {video.author}",
             f"播放: {video.play_label} · 时长: {video.duration}",
             f"发布: {video.published_label}",
@@ -211,19 +231,20 @@ class BaseFeedScreen(Screen[bool | None]):
             video.description or "暂无简介",
         ]
         detail.update("\n".join(lines))
-        comments.set_comments([], title="评论预览", empty_message=self.comment_empty_message(video))
+        comments.set_comments([], title=DEFAULT_COMMENT_PANEL_TITLE, empty_message=self.comment_empty_message(video))
 
     def comment_empty_message(self, video) -> str:
         if video is None:
-            return "当前没有可展示的视频"
+            return DEFAULT_NO_VISIBLE_VIDEO_MESSAGE
         if video.bvid or video.aid is not None:
-            return "按 c 加载评论预览"
+            return DEFAULT_COMMENT_PREVIEW_EMPTY_MESSAGE
         return "当前条目暂不支持评论预览，请按 o 在浏览器查看"
 
     def _update_help_overlay(self) -> None:
-        recent = " / ".join(self.adapter.recent_keywords(5)) or "暂无"
         overlay = self.query_one("#help-overlay", Static)
-        overlay.update(f"{help_text()}\n\n最近搜索: {recent}")
+        overlay.update(
+            f"{help_text()}\n\n{format_recent_searches_text(self.adapter.recent_keywords(5), empty_text=DEFAULT_EMPTY_RECENT_SEARCHES_TEXT)}"
+        )
 
     def _video_key(self, video) -> str:
         return video.bvid or (f"av{video.aid}" if video.aid is not None else video.url)
@@ -243,7 +264,7 @@ class BaseFeedScreen(Screen[bool | None]):
     def show_detail(self) -> None:
         video = self.current_video()
         if video is None:
-            self.set_status("当前没有可查看的视频")
+            self.set_status(format_no_video_status("查看"))
             return
         self._detail_return_key = self._video_key(video)
         from .detail import DetailScreen
@@ -286,7 +307,7 @@ class BaseFeedScreen(Screen[bool | None]):
     def rerun_last_search(self) -> None:
         keywords = self.adapter.recent_keywords(1)
         if not keywords:
-            self.set_status("没有最近搜索记录")
+            self.set_status(DEFAULT_NO_RECENT_SEARCH_STATUS)
             return
         self.app.open_search(keyword=keywords[0])
 
@@ -294,10 +315,10 @@ class BaseFeedScreen(Screen[bool | None]):
         try:
             keyword = self.adapter.default_search_keyword()
         except BilibiliAPIError as exc:
-            self.set_status(f"默认搜索词加载失败: {exc}")
+            self.set_status(f"{DEFAULT_DEFAULT_SEARCH_LOAD_FAILED_PREFIX} {exc}")
             return
         if not keyword:
-            self.set_status("当前没有默认搜索词")
+            self.set_status(DEFAULT_NO_DEFAULT_SEARCH_STATUS)
             return
         self.app.open_search(keyword=keyword)
 
@@ -310,10 +331,13 @@ class BaseFeedScreen(Screen[bool | None]):
     def show_favorites(self) -> None:
         self.app.open_favorites()
 
+    def show_watch_later(self) -> None:
+        self.app.open_watch_later()
+
     def toggle_favorite(self) -> None:
         video = self.current_video()
         if video is None:
-            self.set_status("当前没有可收藏的视频")
+            self.set_status(format_no_video_status("收藏"))
             return
         try:
             added = self.adapter.toggle_favorite(video)
@@ -321,6 +345,20 @@ class BaseFeedScreen(Screen[bool | None]):
             self.set_status(str(exc))
             return
         message = f"{'已收藏' if added else '已取消收藏'}: {video.title}"
+        self.load_feed(preserve_key=self._video_key(video), set_status=False)
+        self.set_status(message)
+
+    def toggle_watch_later(self) -> None:
+        video = self.current_video()
+        if video is None:
+            self.set_status(format_no_video_status("加入稍后看"))
+            return
+        try:
+            added = self.adapter.toggle_watch_later(video)
+        except BilibiliAPIError as exc:
+            self.set_status(str(exc))
+            return
+        message = f"{'已加入稍后看' if added else '已移出稍后看'}: {video.title}"
         self.load_feed(preserve_key=self._video_key(video), set_status=False)
         self.set_status(message)
 
@@ -364,7 +402,7 @@ class BaseFeedScreen(Screen[bool | None]):
     def open_in_browser(self) -> None:
         video = self.current_video()
         if video is None:
-            self.set_status("当前没有可打开的视频")
+            self.set_status(format_no_video_status("打开"))
             return
         if video.item is not None:
             self.adapter.history_store.add_video(video.item)
@@ -374,7 +412,7 @@ class BaseFeedScreen(Screen[bool | None]):
     def refresh_comments(self) -> None:
         video = self.current_video()
         if video is None:
-            self.set_status("当前没有可加载评论的视频")
+            self.set_status(format_no_video_status("加载评论"))
             return
         try:
             detail = self.adapter.detail(video, comment_limit=4)
@@ -404,7 +442,7 @@ class BaseFeedScreen(Screen[bool | None]):
         self.help_visible = not self.help_visible
         overlay = self.query_one("#help-overlay", Static)
         overlay.set_class(not self.help_visible, "hidden")
-        self.set_status("帮助浮层已打开" if self.help_visible else "帮助浮层已关闭")
+        self.set_status(format_help_overlay_status(self.help_visible))
 
     def _channel_label(self, index: int) -> str:
         channel = self.adapter.channels[index]
@@ -423,7 +461,7 @@ class HomeScreen(BaseFeedScreen):
         return f"{channel.label} · 第 {self.page} 页"
 
     def subtitle_text(self) -> str:
-        return "首页推荐流 · 热门 / 动画 / 游戏 / 音乐 / 番剧 · Tab / Shift+Tab 切换分区 · 1-9 / 0 直选"
+        return f"首页推荐流 · 热门 / 动画 / 游戏 / 音乐 / 番剧 · {HOME_SUBTITLE_TEXT}"
 
     def banner_text(self) -> str:
         current = self.adapter.channels[self.channel_index].label
@@ -431,8 +469,8 @@ class HomeScreen(BaseFeedScreen):
         return f"  首页精选  ·  当前分区：{current}  ·  热门关键词：{hot_words}  "
 
     def meta_text(self) -> str:
-        recent = " / ".join(self.adapter.recent_keywords(3)) or "暂无"
-        return f"当前分区: {self.adapter.channels[self.channel_index].label} · 最近搜索: {recent}"
+        recent = format_recent_searches_text(self.adapter.recent_keywords(3))
+        return f"当前分区: {self.adapter.channels[self.channel_index].label} · {recent}"
 
     def fetch_snapshot(self) -> FeedSnapshot:
         return self.adapter.load_home(channel_index=self.channel_index, page=self.page, page_size=self.PAGE_SIZE)

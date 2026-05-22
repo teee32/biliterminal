@@ -3,15 +3,19 @@ from __future__ import annotations
 from textual.reactive import reactive
 from textual.widgets import Static
 
-from ..utils import CommentSummary
+from ..utils import (
+    CommentSummary,
+    DEFAULT_COMMENT_PANEL_TITLE,
+    DEFAULT_COMMENT_PREVIEW_EMPTY_MESSAGE,
+)
 
 
 class CommentView(Static):
     """Right-side comment preview panel for the Textual UI."""
 
-    panel_title = reactive("评论预览")
+    panel_title = reactive(DEFAULT_COMMENT_PANEL_TITLE)
     comments = reactive(tuple())
-    empty_message = reactive("按 c 加载评论预览")
+    empty_message = reactive(DEFAULT_COMMENT_PREVIEW_EMPTY_MESSAGE)
 
     def set_comments(
         self,

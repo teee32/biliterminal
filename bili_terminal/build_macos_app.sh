@@ -190,7 +190,7 @@ chmod +x "${RESOURCES_DIR}/launch.command"
 
 cp "${ROOT_DIR}/bili_terminal/__init__.py" "${PAYLOAD_DIR}/__init__.py"
 cp "${ROOT_DIR}/bili_terminal/__main__.py" "${PAYLOAD_DIR}/__main__.py"
-cp "${ROOT_DIR}/bili_terminal/bilibili_cli.py" "${PAYLOAD_DIR}/bilibili_cli.py"
+cp "${ROOT_DIR}/bili_terminal/core.py" "${PAYLOAD_DIR}/core.py"
 copy_tree "${ROOT_DIR}/bili_terminal/tui" "${PAYLOAD_DIR}/tui"
 copy_tree "${RUNTIME_SOURCE_DIR}" "${RUNTIME_DIR}"
 cp "${HELPER_SOURCE}" "${MACOS_DIR}/biliterminal_audio_helper.m"

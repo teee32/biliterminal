@@ -475,7 +475,7 @@ def render_capture(scenario: Scenario, raw: str) -> Image.Image:
         cx = light_x + offset * 26
         draw.ellipse((cx - 7, light_y - 7, cx + 7, light_y + 7), fill=color)
 
-    title_text = f"ggziblaking — biliterminal — Python -m bili_terminal tui — {scenario.width}×{scenario.height}"
+    title_text = f"ggziblaking — biliterminal — Python -m bili_terminal --tui — {scenario.width}×{scenario.height}"
     title_font = fonts["title"]
     draw.text((window_x + 92, window_y + 14), title_text, font=title_font, fill=TITLE_TEXT)
 

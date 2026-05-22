@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from ..keymap import FAVORITES_SUBTITLE_TEXT
 from ..utils import FeedSnapshot, TextualAdapter
 from .home import BaseFeedScreen
 
@@ -13,7 +14,7 @@ class FavoritesScreen(BaseFeedScreen):
         super().__init__(adapter=adapter, initial_audio=initial_audio)
 
     def subtitle_text(self) -> str:
-        return "收藏夹 · f 取消收藏 · Enter 查看详情 · o 浏览器打开"
+        return FAVORITES_SUBTITLE_TEXT
 
     def meta_text(self) -> str:
         return f"共 {len(self.snapshot.videos)} 条收藏"

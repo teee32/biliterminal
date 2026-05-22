@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "biliterminal"
-version = "0.3.0"
-description = "Terminal-first Bilibili browser with a staged Textual migration"
+version = "0.3.1"
+description = "Textual TUI-only Bilibili browser"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

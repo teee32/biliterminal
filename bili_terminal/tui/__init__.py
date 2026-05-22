@@ -1,4 +1,4 @@
-"""Textual UI package for the staged BiliTerminal migration."""
+"""Textual UI package for BiliTerminal."""
 
 from .app import BiliTerminalApp, create_app, run_textual_app
 
