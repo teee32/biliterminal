@@ -248,6 +248,92 @@ AudioBar {
     border: round #00a1d6;
 }
 
+CommandPalette {
+    background: #09111f 72%;
+    color: #eef5ff;
+}
+
+CommandPalette > Vertical {
+    background: #101a2e;
+    color: #eef5ff;
+}
+
+CommandPalette > .command-palette--help-text {
+    color: #b9cae8;
+}
+
+CommandPalette > .command-palette--highlight {
+    color: #8ee1ff;
+}
+
+CommandPalette #--input {
+    border: round #00a1d6;
+    background: #132545;
+    color: #eef5ff;
+}
+
+CommandPalette #--input Label,
+CommandPalette SearchIcon,
+CommandInput,
+CommandInput:focus {
+    color: #eef5ff;
+    background: transparent;
+}
+
+CommandInput > .input--cursor {
+    background: #8ee1ff;
+    color: #09111f;
+}
+
+CommandInput > .input--selection {
+    background: #1f4e8d;
+}
+
+CommandInput > .input--placeholder,
+CommandInput > .input--suggestion {
+    color: #86a3cc;
+}
+
+CommandPalette #--results {
+    background: transparent;
+    color: #d8e8ff;
+}
+
+CommandList {
+    background: #101a2e;
+    color: #d8e8ff;
+    border-bottom: round #233f68;
+}
+
+CommandList > .option-list--option {
+    color: #d8e8ff;
+    background: #101a2e;
+}
+
+CommandList > .option-list--option-highlighted {
+    background: #1f4e8d;
+    color: #ffffff;
+}
+
+CommandList > .option-list--option-disabled {
+    color: #86a3cc;
+}
+
+CommandList > .option-list--option-hover {
+    background: #18385f;
+}
+
+CommandPalette LoadingIndicator {
+    color: #8ee1ff;
+    border-bottom: round #233f68;
+}
+
+CommandPalette Button {
+    background: #132545;
+    color: #eef5ff;
+    border: round #00a1d6;
+}
+
 #theme-picker-dialog {
     width: 72;
     max-width: 88%;
@@ -272,6 +358,69 @@ AudioBar {
 
 .hidden {
     display: none;
+}
+
+* {
+    scrollbar-background: #0d1830;
+    scrollbar-background-hover: #0d1830;
+    scrollbar-background-active: #0d1830;
+    scrollbar-color: #233f68;
+    scrollbar-color-hover: #314c78;
+    scrollbar-color-active: #00a1d6;
+    scrollbar-corner-color: #0d1830;
+}
+
+App.theme-light * {
+    scrollbar-background: #fff3f8;
+    scrollbar-background-hover: #fff3f8;
+    scrollbar-background-active: #fff3f8;
+    scrollbar-color: #f1c7d8;
+    scrollbar-color-hover: #ffb6cf;
+    scrollbar-color-active: #fb7299;
+    scrollbar-corner-color: #fff3f8;
+}
+
+App.theme-claude * {
+    scrollbar-background: #f0ede4;
+    scrollbar-background-hover: #f0ede4;
+    scrollbar-background-active: #f0ede4;
+    scrollbar-color: #d9d4c5;
+    scrollbar-color-hover: #c8c2b0;
+    scrollbar-color-active: #c96442;
+    scrollbar-corner-color: #f0ede4;
+}
+
+Tooltip {
+    background: #132545;
+    color: #eef5ff;
+    border: round #00a1d6;
+}
+
+App.theme-light Tooltip {
+    background: #ffffff;
+    color: #6f3150;
+    border: round #fb7299;
+}
+
+App.theme-claude Tooltip {
+    background: #f5f2ea;
+    color: #2c2a26;
+    border: round #c96442;
+}
+
+LoadingIndicator {
+    color: #8ee1ff;
+    background: transparent;
+}
+
+App.theme-light LoadingIndicator {
+    color: #fb7299;
+    background: transparent;
+}
+
+App.theme-claude LoadingIndicator {
+    color: #c96442;
+    background: transparent;
 }
 
 App.theme-light Screen {
@@ -327,6 +476,7 @@ App.theme-light #screen-subtitle,
 App.theme-light #screen-meta,
 App.theme-light #detail-meta,
 App.theme-light #detail-hint,
+App.theme-light #feed-section-hint,
 App.theme-light #detail-summary,
 App.theme-light #detail-lines,
 App.theme-light CommentView,
@@ -382,8 +532,300 @@ App.theme-light #search-input {
     border: round #fb7299;
 }
 
+App.theme-light CommandPalette {
+    background: #fff7fb 72%;
+    color: #6f3150;
+}
+
+App.theme-light CommandPalette > Vertical {
+    background: #ffffff;
+    color: #6f3150;
+}
+
+App.theme-light CommandPalette > .command-palette--help-text {
+    color: #8f5771;
+}
+
+App.theme-light CommandPalette > .command-palette--highlight {
+    color: #00a1d6;
+}
+
+App.theme-light CommandPalette #--input {
+    border: round #fb7299;
+    background: #fffafb;
+    color: #7a2146;
+}
+
+App.theme-light CommandPalette #--input Label,
+App.theme-light CommandPalette SearchIcon,
+App.theme-light CommandInput,
+App.theme-light CommandInput:focus {
+    color: #7a2146;
+    background: transparent;
+}
+
+App.theme-light CommandInput > .input--cursor {
+    background: #fb7299;
+    color: #fffafb;
+}
+
+App.theme-light CommandInput > .input--selection {
+    background: #ffd1e1;
+}
+
+App.theme-light CommandInput > .input--placeholder,
+App.theme-light CommandInput > .input--suggestion {
+    color: #b1728d;
+}
+
+App.theme-light CommandPalette #--results {
+    background: transparent;
+    color: #6f3150;
+}
+
+App.theme-light CommandList {
+    background: #fff3f8;
+    color: #6f3150;
+    border-bottom: round #ffd1e1;
+}
+
+App.theme-light CommandList > .option-list--option {
+    color: #6f3150;
+    background: #fff3f8;
+}
+
+App.theme-light CommandList > .option-list--option-highlighted {
+    background: #ffd1e1;
+    color: #7a2146;
+}
+
+App.theme-light CommandList > .option-list--option-disabled {
+    color: #b1728d;
+}
+
+App.theme-light CommandList > .option-list--option-hover {
+    background: #ffe3ee;
+}
+
+App.theme-light CommandPalette LoadingIndicator {
+    color: #fb7299;
+    border-bottom: round #ffd1e1;
+}
+
+App.theme-light CommandPalette Button {
+    background: #fffafb;
+    color: #7a2146;
+    border: round #fb7299;
+}
+
 App.theme-light ListView > ListItem.--highlight {
     background: #ffd1e1;
     color: #7a2146;
     border: round #fb7299;
+}
+
+App.theme-claude {
+    background: #f0ede4;
+    color: #2c2a26;
+}
+
+App.theme-claude Screen {
+    background: #f0ede4;
+    color: #2c2a26;
+}
+
+App.theme-claude #page-shell,
+App.theme-claude #browser-layout,
+App.theme-claude #detail-layout {
+    background: #f0ede4;
+}
+
+App.theme-claude Header,
+App.theme-claude Footer {
+    background: #e6e2d6;
+    color: #3d3a35;
+}
+
+App.theme-claude #page-masthead {
+    background: #f5f2ea;
+    border: round #d9d4c5;
+    color: #c96442;
+}
+
+App.theme-claude .panel {
+    background: #f5f2ea;
+    border: round #d9d4c5;
+}
+
+App.theme-claude #hero-card,
+App.theme-claude #detail-hero-card {
+    background: #f5f2ea;
+    border: round #c96442;
+}
+
+App.theme-claude #feed-card,
+App.theme-claude #theme-picker-dialog {
+    background: #f5f2ea;
+    border: round #d9d4c5;
+}
+
+App.theme-claude .panel-title,
+App.theme-claude #feed-section-title,
+App.theme-claude #screen-title,
+App.theme-claude #detail-title,
+App.theme-claude #theme-picker-title {
+    color: #c96442;
+}
+
+App.theme-claude #sidebar-intro,
+App.theme-claude #screen-subtitle,
+App.theme-claude #screen-meta,
+App.theme-claude #detail-meta,
+App.theme-claude #detail-hint,
+App.theme-claude #feed-section-hint,
+App.theme-claude #detail-summary,
+App.theme-claude #detail-lines,
+App.theme-claude CommentView,
+App.theme-claude AudioBar,
+App.theme-claude #status-line,
+App.theme-claude #help-overlay,
+App.theme-claude #theme-picker-subtitle,
+App.theme-claude #theme-picker-hint,
+App.theme-claude .theme-picker__item,
+App.theme-claude .video-list__item,
+App.theme-claude .channel-item {
+    color: #6b6862;
+}
+
+App.theme-claude #screen-banner,
+App.theme-claude #detail-meta {
+    background: #ebe7dc;
+    border: round #c96442;
+    color: #3d3a35;
+}
+
+App.theme-claude #detail-summary,
+App.theme-claude #help-overlay,
+App.theme-claude #theme-picker-list,
+App.theme-claude VideoList,
+App.theme-claude #channel-list,
+App.theme-claude #detail-scroll,
+App.theme-claude CommentView {
+    background: #f5f2ea;
+    border: round #d9d4c5;
+}
+
+App.theme-claude #feed-card VideoList {
+    background: transparent;
+    border: none;
+}
+
+App.theme-claude #status-line {
+    background: #e6e2d6;
+    border: round #d9d4c5;
+    color: #3d3a35;
+}
+
+App.theme-claude AudioBar {
+    background: #ebe7dc;
+    border: round #c96442;
+    color: #3d3a35;
+}
+
+App.theme-claude #search-input {
+    background: #ebe7dc;
+    color: #2c2a26;
+    border: round #c96442;
+}
+
+App.theme-claude CommandPalette {
+    background: #f0ede4 72%;
+    color: #2c2a26;
+}
+
+App.theme-claude CommandPalette > Vertical {
+    background: #f5f2ea;
+    color: #2c2a26;
+}
+
+App.theme-claude CommandPalette > .command-palette--help-text {
+    color: #8b8680;
+}
+
+App.theme-claude CommandPalette > .command-palette--highlight {
+    color: #c96442;
+}
+
+App.theme-claude CommandPalette #--input {
+    border: round #c96442;
+    background: #ebe7dc;
+    color: #2c2a26;
+}
+
+App.theme-claude CommandPalette #--input Label,
+App.theme-claude CommandPalette SearchIcon,
+App.theme-claude CommandInput,
+App.theme-claude CommandInput:focus {
+    color: #2c2a26;
+    background: transparent;
+}
+
+App.theme-claude CommandInput > .input--cursor {
+    background: #c96442;
+    color: #f5f2ea;
+}
+
+App.theme-claude CommandInput > .input--selection {
+    background: #ebe7dc;
+}
+
+App.theme-claude CommandInput > .input--placeholder,
+App.theme-claude CommandInput > .input--suggestion {
+    color: #a8a39a;
+}
+
+App.theme-claude CommandPalette #--results {
+    background: transparent;
+    color: #3d3a35;
+}
+
+App.theme-claude CommandList {
+    background: #f5f2ea;
+    color: #3d3a35;
+    border-bottom: round #d9d4c5;
+}
+
+App.theme-claude CommandList > .option-list--option {
+    color: #3d3a35;
+    background: #f5f2ea;
+}
+
+App.theme-claude CommandList > .option-list--option-highlighted {
+    background: #c96442;
+    color: #f5f2ea;
+}
+
+App.theme-claude CommandList > .option-list--option-disabled {
+    color: #a8a39a;
+}
+
+App.theme-claude CommandList > .option-list--option-hover {
+    background: #ebe7dc;
+}
+
+App.theme-claude CommandPalette LoadingIndicator {
+    color: #c96442;
+    border-bottom: round #d9d4c5;
+}
+
+App.theme-claude CommandPalette Button {
+    background: #ebe7dc;
+    color: #2c2a26;
+    border: round #c96442;
+}
+
+App.theme-claude ListView > ListItem.--highlight {
+    background: #c96442;
+    color: #f5f2ea;
+    border: round #b0552f;
 }

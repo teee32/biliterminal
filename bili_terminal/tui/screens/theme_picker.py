@@ -7,6 +7,8 @@ from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import ListItem, ListView, Static
 
+from ..keymap import THEME_PICKER_HINT_TEXT
+
 
 class ThemePickerScreen(ModalScreen[str | None]):
     """Small modal used by the command palette Theme entry."""
@@ -14,6 +16,7 @@ class ThemePickerScreen(ModalScreen[str | None]):
     THEMES: tuple[tuple[str, str, str], ...] = (
         ("dark", "Bilibili Dark", "终端暗黑蓝粉 · 更适合夜间使用"),
         ("light", "Bilibili Light", "B站粉白浅色 · 更接近官网观感"),
+        ("claude", "Claude", "Claude.ai 同款 · 暖白底 + 橙棕强调 · 适合长时间阅读"),
     )
 
     BINDINGS = [
@@ -34,7 +37,7 @@ class ThemePickerScreen(ModalScreen[str | None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="theme-picker-dialog"):
             yield Static("选择主题", id="theme-picker-title")
-            yield Static("只提供 BiliTerminal 自己支持的 bilibili 主题", id="theme-picker-subtitle")
+            yield Static("只提供 BiliTerminal 自己支持的主题", id="theme-picker-subtitle")
             yield ListView(
                 *(
                     ListItem(
@@ -45,7 +48,7 @@ class ThemePickerScreen(ModalScreen[str | None]):
                 ),
                 id="theme-picker-list",
             )
-            yield Static("↑/↓ / j/k 选择 · Enter 应用 · Esc / b 关闭", id="theme-picker-hint")
+            yield Static(THEME_PICKER_HINT_TEXT, id="theme-picker-hint")
 
     def on_mount(self) -> None:
         if hasattr(self.app, "apply_theme_to_screen"):
