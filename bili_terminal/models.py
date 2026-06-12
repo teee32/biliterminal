@@ -67,6 +67,7 @@ class AudioPlaybackState:
     paused: bool = False
     control_pid: int | None = None
     media_path: str | None = None
+    ipc_socket: str | None = None
 
 
 def parse_video_ref(value: str) -> tuple[str, str]:
