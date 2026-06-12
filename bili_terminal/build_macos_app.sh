@@ -27,9 +27,8 @@ mkdir -p "${RESOURCES_DIR}" "${PAYLOAD_DIR}" "${MACOS_DIR}"
 cp "${ROOT_DIR}/bili_terminal/macos/launch.command" "${RESOURCES_DIR}/launch.command"
 chmod +x "${RESOURCES_DIR}/launch.command"
 
-cp "${ROOT_DIR}/bili_terminal/__init__.py" "${PAYLOAD_DIR}/__init__.py"
-cp "${ROOT_DIR}/bili_terminal/__main__.py" "${PAYLOAD_DIR}/__main__.py"
-cp "${ROOT_DIR}/bili_terminal/bilibili_cli.py" "${PAYLOAD_DIR}/bilibili_cli.py"
+cp "${ROOT_DIR}/bili_terminal/"*.py "${PAYLOAD_DIR}/"
+rm -f "${PAYLOAD_DIR}/generate_readme_screenshots.py"
 cp "${HELPER_SOURCE}" "${MACOS_DIR}/biliterminal_audio_helper.m"
 
 if command -v clang >/dev/null 2>&1; then

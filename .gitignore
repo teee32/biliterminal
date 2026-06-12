@@ -8,3 +8,9 @@ dist/
 .omx/
 memoapp1/
 MT2.26.4.apk
+.venv/
+.pytest_cache/
+.biliterminal/
+:memory:
+build/
+*.egg-info/

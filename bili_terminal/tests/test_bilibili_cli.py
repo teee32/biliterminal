@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from unittest import mock
 
+from bili_terminal import audio
 from bili_terminal import bilibili_cli as cli
 
 
@@ -171,7 +172,7 @@ class FormattingTests(unittest.TestCase):
         self.assertEqual(stream.url, "https://example.com/fallback.mp4")
         self.assertEqual(stream.source_kind, "media")
 
-    @mock.patch.object(cli, "pid_exists", return_value=True)
+    @mock.patch.object(audio, "pid_exists", return_value=True)
     def test_save_and_load_audio_playback_state(self, _mock_exists: mock.MagicMock) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             with mock.patch.dict(os.environ, {"BILITERMINAL_STATE_DIR": temp_dir}, clear=False):
@@ -187,7 +188,7 @@ class FormattingTests(unittest.TestCase):
         self.assertTrue(state.paused)
         self.assertEqual(state.control_pid, 5678)
 
-    @mock.patch.object(cli, "pid_exists", return_value=True)
+    @mock.patch.object(audio, "pid_exists", return_value=True)
     def test_save_and_load_audio_playback_state_with_media_path(self, _mock_exists: mock.MagicMock) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             media_path = os.path.join(temp_dir, "audio.m4a")
@@ -213,9 +214,9 @@ class FormattingTests(unittest.TestCase):
         self.assertEqual(state.control_pid, 6789)
         self.assertEqual(state.media_path, media_path)
 
-    @mock.patch.object(cli, "clear_audio_playback_state")
-    @mock.patch.object(cli, "cleanup_audio_media_path")
-    @mock.patch.object(cli, "pid_exists", return_value=False)
+    @mock.patch.object(audio, "clear_audio_playback_state")
+    @mock.patch.object(audio, "cleanup_audio_media_path")
+    @mock.patch.object(audio, "pid_exists", return_value=False)
     def test_load_audio_playback_state_cleans_stale_process_session(
         self,
         _mock_exists: mock.MagicMock,
@@ -488,11 +489,11 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(stream.url, "https://example.com/audio.m4s")
         self.assertEqual(stream.referer, item.url)
 
-    @mock.patch.object(cli, "clear_audio_playback_state")
-    @mock.patch.object(cli, "pid_exists", side_effect=[True, False])
-    @mock.patch.object(cli, "wait_for_audio_exit")
-    @mock.patch.object(cli, "send_audio_signal")
-    @mock.patch.object(cli, "load_audio_playback_state")
+    @mock.patch.object(audio, "clear_audio_playback_state")
+    @mock.patch.object(audio, "pid_exists", side_effect=[True, False])
+    @mock.patch.object(audio, "wait_for_audio_exit")
+    @mock.patch.object(audio, "send_audio_signal")
+    @mock.patch.object(audio, "load_audio_playback_state")
     def test_stop_audio_playback_terminates_current_session(
         self,
         mock_load: mock.MagicMock,
@@ -507,12 +508,12 @@ class ClientTests(unittest.TestCase):
         mock_clear.assert_called_once()
         self.assertIn("已停止音频", message)
 
-    @mock.patch.object(cli, "cleanup_audio_media_path")
-    @mock.patch.object(cli, "clear_audio_playback_state")
-    @mock.patch.object(cli, "pid_exists", side_effect=[True, True, False])
-    @mock.patch.object(cli, "wait_for_audio_exit")
-    @mock.patch.object(cli, "send_audio_signal")
-    @mock.patch.object(cli, "load_audio_playback_state")
+    @mock.patch.object(audio, "cleanup_audio_media_path")
+    @mock.patch.object(audio, "clear_audio_playback_state")
+    @mock.patch.object(audio, "pid_exists", side_effect=[True, True, False])
+    @mock.patch.object(audio, "wait_for_audio_exit")
+    @mock.patch.object(audio, "send_audio_signal")
+    @mock.patch.object(audio, "load_audio_playback_state")
     def test_stop_audio_playback_cleans_media_path_for_process_backend(
         self,
         mock_load: mock.MagicMock,
@@ -539,9 +540,9 @@ class ClientTests(unittest.TestCase):
         mock_clear.assert_called_once()
         self.assertIn("已停止音频", message)
 
-    @mock.patch.object(cli, "save_audio_playback_state")
-    @mock.patch.object(cli, "send_audio_signal")
-    @mock.patch.object(cli, "load_audio_playback_state")
+    @mock.patch.object(audio, "save_audio_playback_state")
+    @mock.patch.object(audio, "send_audio_signal")
+    @mock.patch.object(audio, "load_audio_playback_state")
     def test_pause_audio_playback_uses_helper_pause_signal_for_macos_native(
         self,
         mock_load: mock.MagicMock,
@@ -564,9 +565,9 @@ class ClientTests(unittest.TestCase):
         mock_save.assert_called_once_with(state)
         self.assertIn("已暂停音频", message)
 
-    @mock.patch.object(cli, "save_audio_playback_state")
-    @mock.patch.object(cli, "send_audio_signal")
-    @mock.patch.object(cli, "load_audio_playback_state")
+    @mock.patch.object(audio, "save_audio_playback_state")
+    @mock.patch.object(audio, "send_audio_signal")
+    @mock.patch.object(audio, "load_audio_playback_state")
     def test_resume_audio_playback_uses_helper_resume_signal_for_macos_native(
         self,
         mock_load: mock.MagicMock,
@@ -589,14 +590,14 @@ class ClientTests(unittest.TestCase):
         mock_save.assert_called_once_with(state)
         self.assertIn("已继续播放音频", message)
 
-    @mock.patch.object(cli, "cleanup_audio_media_path")
-    @mock.patch.object(cli, "save_audio_playback_state")
-    @mock.patch.object(cli, "load_audio_playback_state")
-    @mock.patch.object(cli, "download_audio_to_path")
-    @mock.patch.object(cli, "prepare_audio_temp_path", return_value="/tmp/audio.m4a")
-    @mock.patch.object(cli, "macos_audio_helper_path", return_value="/tmp/biliterminal-audio-helper")
-    @mock.patch.object(cli, "build_audio_player_command", return_value=None)
-    @mock.patch.object(cli.subprocess, "Popen")
+    @mock.patch.object(audio, "cleanup_audio_media_path")
+    @mock.patch.object(audio, "save_audio_playback_state")
+    @mock.patch.object(audio, "load_audio_playback_state")
+    @mock.patch.object(audio, "download_audio_to_path")
+    @mock.patch.object(audio, "prepare_audio_temp_path", return_value="/tmp/audio.m4a")
+    @mock.patch.object(audio, "macos_audio_helper_path", return_value="/tmp/biliterminal-audio-helper")
+    @mock.patch.object(audio, "build_audio_player_command", return_value=None)
+    @mock.patch.object(audio.subprocess, "Popen")
     def test_run_audio_worker_switches_to_macos_native_helper(
         self,
         mock_popen: mock.MagicMock,
@@ -630,6 +631,32 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(saved_state.pid, os.getpid())
         self.assertEqual(saved_state.control_pid, helper_process.pid)
         mock_cleanup.assert_called_once_with("/tmp/audio.m4a")
+
+    @mock.patch.object(audio, "save_audio_playback_state")
+    @mock.patch.object(audio, "load_audio_playback_state")
+    @mock.patch.object(audio, "build_audio_player_command")
+    @mock.patch.object(audio.subprocess, "Popen")
+    def test_run_audio_worker_uses_direct_video_key_without_state_read(
+        self,
+        mock_popen: mock.MagicMock,
+        mock_build_command: mock.MagicMock,
+        mock_load: mock.MagicMock,
+        mock_save: mock.MagicMock,
+    ) -> None:
+        mock_build_command.return_value = ["mpv", "--no-video", "url"]
+        player = mock.MagicMock()
+        player.pid = 4242
+        player.wait.return_value = 0
+        mock_popen.return_value = player
+        result = cli.run_audio_worker(
+            "https://example.com/audio.m4s", "https://www.bilibili.com/video/BV1", "UA", "标题",
+            video_key="BV1xx411c7mu",
+        )
+        self.assertEqual(result, 0)
+        mock_load.assert_not_called()
+        saved_state = mock_save.call_args.args[0]
+        self.assertEqual(saved_state.video_key, "BV1xx411c7mu")
+        self.assertEqual(saved_state.control_pid, 4242)
 
 
 class ShellTests(unittest.TestCase):
@@ -718,7 +745,7 @@ class ShellTests(unittest.TestCase):
         self.assertEqual(url, "https://www.bilibili.com/video/BV1xx411c7mu")
         mock_open.assert_called_once_with("https://www.bilibili.com/video/BV1xx411c7mu")
 
-    @mock.patch.object(cli, "play_audio_for_item")
+    @mock.patch.object(audio, "play_audio_for_item")
     def test_do_audio_by_index_uses_last_results(self, mock_play_audio: mock.MagicMock) -> None:
         mock_play_audio.return_value = "已开始播放音频: 标题"
         shell = cli.BilibiliCLI(cli.BilibiliClient(), self.make_store())
@@ -744,7 +771,7 @@ class ShellTests(unittest.TestCase):
         mock_play_audio.assert_called_once()
         self.assertIn("已开始播放音频", stdout.getvalue())
 
-    @mock.patch.object(cli, "stop_audio_playback")
+    @mock.patch.object(audio, "stop_audio_playback")
     def test_do_audio_stop_uses_audio_control(self, mock_stop_audio: mock.MagicMock) -> None:
         mock_stop_audio.return_value = "已停止音频: 标题"
         shell = cli.BilibiliCLI(cli.BilibiliClient(), self.make_store())
@@ -964,16 +991,16 @@ class TUIStateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             store = cli.HistoryStore(path=f"{temp_dir}/history.json")
             tui = cli.BilibiliTUI(cli.BilibiliClient(), store)
-            tui.load_items = mock.MagicMock()
+            tui.start_load_items = mock.MagicMock()
             tui.set_channel(3, push_current=False)
             self.assertEqual(tui.channel_index, 3)
-            tui.load_items.assert_called_once()
+            tui.start_load_items.assert_called_once()
 
     def test_restore_previous_state_returns_to_search(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             store = cli.HistoryStore(path=f"{temp_dir}/history.json")
             tui = cli.BilibiliTUI(cli.BilibiliClient(), store)
-            tui.load_items = mock.MagicMock()
+            tui.start_load_items = mock.MagicMock()
             tui.mode = "search"
             tui.keyword = "原神"
             tui.page = 2
@@ -989,7 +1016,7 @@ class TUIStateTests(unittest.TestCase):
             self.assertEqual(tui.mode, "search")
             self.assertEqual(tui.keyword, "原神")
             self.assertEqual(tui.page, 2)
-            tui.load_items.assert_called_once()
+            tui.start_load_items.assert_called_once()
 
     def test_rerun_last_search_switches_mode(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1055,7 +1082,7 @@ class TUIStateTests(unittest.TestCase):
             tui.load_items.assert_called_once()
             self.assertIn("已取消收藏", tui.status)
 
-    @mock.patch.object(cli, "play_audio_for_item")
+    @mock.patch.object(audio, "play_audio_for_item")
     def test_play_selected_audio_updates_status(self, mock_play_audio: mock.MagicMock) -> None:
         mock_play_audio.return_value = "已开始播放音频: 标题"
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1066,9 +1093,9 @@ class TUIStateTests(unittest.TestCase):
             mock_play_audio.assert_called_once()
             self.assertEqual(tui.status, "已开始播放音频: 标题")
 
-    @mock.patch.object(cli, "toggle_audio_playback")
-    @mock.patch.object(cli, "load_audio_playback_state")
-    @mock.patch.object(cli, "play_audio_for_item")
+    @mock.patch.object(audio, "toggle_audio_playback")
+    @mock.patch.object(audio, "load_audio_playback_state")
+    @mock.patch.object(audio, "play_audio_for_item")
     def test_play_selected_audio_toggles_when_same_item_is_playing(
         self,
         mock_play_audio: mock.MagicMock,
@@ -1091,7 +1118,7 @@ class TUIStateTests(unittest.TestCase):
         mock_play_audio.assert_not_called()
         self.assertEqual(tui.status, "已暂停音频: 标题")
 
-    @mock.patch.object(cli, "stop_audio_playback")
+    @mock.patch.object(audio, "stop_audio_playback")
     def test_stop_audio_updates_status(self, mock_stop_audio: mock.MagicMock) -> None:
         mock_stop_audio.return_value = "已停止音频: 标题"
         with tempfile.TemporaryDirectory() as temp_dir:

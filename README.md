@@ -156,7 +156,7 @@ bili> search 原神 1 5
 
 ## TUI 快捷键
 
-- `↑/↓` 或 `j/k`：移动选中项
+- `↑/↓` 或 `j/k`：移动选中项（停留片刻自动加载热评）
 - `Enter`：进入全屏详情视图
 - `Esc` 或 `b`：从详情页返回，或回到上一个列表状态
 - `/` 或 `s`：输入搜索关键词
@@ -182,7 +182,16 @@ bili> search 原神 1 5
 ## 测试
 
 ```bash
+python3 -m pytest bili_terminal/tests -v
+# 或者用标准库:
 python3 -m unittest discover -s bili_terminal/tests -v
+```
+
+## pip 安装（可选）
+
+```bash
+pip install .
+biliterminal tui
 ```
 
 ## 说明
