@@ -1260,6 +1260,8 @@ class TUIStateTests(unittest.TestCase):
             self.assertEqual(tui.mode_token(), "收藏夹")
 
     def test_draw_featured_card_compact_marks_favorite(self) -> None:
+        import curses
+
         class FakeScreen:
             def __init__(self) -> None:
                 self.lines: list[str] = []
@@ -1268,6 +1270,15 @@ class TUIStateTests(unittest.TestCase):
                 return self
 
             def box(self) -> None:
+                return None
+
+            def addch(self, *_args, **_kwargs) -> None:
+                return None
+
+            def hline(self, *_args, **_kwargs) -> None:
+                return None
+
+            def vline(self, *_args, **_kwargs) -> None:
                 return None
 
             def addnstr(self, _y: int, _x: int, text: str, *_args) -> None:
@@ -1282,7 +1293,13 @@ class TUIStateTests(unittest.TestCase):
             store.add_favorite(item)
             tui = cli.BilibiliTUI(cli.BilibiliClient(), store)
             fake = FakeScreen()
-            tui.draw_featured_card(fake, 0, 0, 8, 40, item, selected=False)
+            with mock.patch.object(curses, "ACS_HLINE", "-", create=True), \
+                 mock.patch.object(curses, "ACS_VLINE", "|", create=True), \
+                 mock.patch.object(curses, "ACS_ULCORNER", "+", create=True), \
+                 mock.patch.object(curses, "ACS_URCORNER", "+", create=True), \
+                 mock.patch.object(curses, "ACS_LLCORNER", "+", create=True), \
+                 mock.patch.object(curses, "ACS_LRCORNER", "+", create=True):
+                tui.draw_featured_card(fake, 0, 0, 8, 40, item, selected=False)
             rendered = " ".join(fake.lines)
             self.assertIn("✦ 收藏卡片", rendered)
 
@@ -1317,9 +1334,20 @@ class TUIStateTests(unittest.TestCase):
             tui.draw_split_view.assert_not_called()
 
     def test_draw_favorites_list_renders_empty_hint(self) -> None:
+        import curses
+
         class FakeScreen:
             def __init__(self) -> None:
                 self.lines: list[str] = []
+
+            def addch(self, *_args, **_kwargs) -> None:
+                return None
+
+            def hline(self, *_args, **_kwargs) -> None:
+                return None
+
+            def vline(self, *_args, **_kwargs) -> None:
+                return None
 
             def addnstr(self, _y: int, _x: int, text: str, *_args) -> None:
                 self.lines.append(text)
@@ -1328,7 +1356,13 @@ class TUIStateTests(unittest.TestCase):
             store = cli.HistoryStore(path=f"{temp_dir}/history.json")
             tui = cli.BilibiliTUI(cli.BilibiliClient(), store)
             fake = FakeScreen()
-            tui.draw_favorites_list(fake, 0, 0, 10, 42)
+            with mock.patch.object(curses, "ACS_HLINE", "-", create=True), \
+                 mock.patch.object(curses, "ACS_VLINE", "|", create=True), \
+                 mock.patch.object(curses, "ACS_ULCORNER", "+", create=True), \
+                 mock.patch.object(curses, "ACS_URCORNER", "+", create=True), \
+                 mock.patch.object(curses, "ACS_LLCORNER", "+", create=True), \
+                 mock.patch.object(curses, "ACS_LRCORNER", "+", create=True):
+                tui.draw_favorites_list(fake, 0, 0, 10, 42)
             rendered = " ".join(fake.lines)
             self.assertIn("收藏夹还是空的", rendered)
             self.assertIn("按 f", rendered)
@@ -1362,6 +1396,8 @@ class TUIStateTests(unittest.TestCase):
             tui.draw_comments_panel.assert_called_once()
 
     def test_draw_comments_panel_renders_error_hint(self) -> None:
+        import curses
+
         class FakeWindow:
             def __init__(self) -> None:
                 self.lines: list[str] = []
@@ -1370,6 +1406,15 @@ class TUIStateTests(unittest.TestCase):
                 return self
 
             def box(self) -> None:
+                return None
+
+            def addch(self, *_args, **_kwargs) -> None:
+                return None
+
+            def hline(self, *_args, **_kwargs) -> None:
+                return None
+
+            def vline(self, *_args, **_kwargs) -> None:
                 return None
 
             def addnstr(self, _y: int, _x: int, text: str, *_args) -> None:
@@ -1382,12 +1427,20 @@ class TUIStateTests(unittest.TestCase):
             tui.items = [item]
             tui.comment_errors[item.bvid or str(item.aid)] = "评论接口受限，请按 o 在浏览器中查看"
             fake = FakeWindow()
-            tui.draw_comments_panel(fake, 0, 0, 8, 42)
+            with mock.patch.object(curses, "ACS_HLINE", "-", create=True), \
+                 mock.patch.object(curses, "ACS_VLINE", "|", create=True), \
+                 mock.patch.object(curses, "ACS_ULCORNER", "+", create=True), \
+                 mock.patch.object(curses, "ACS_URCORNER", "+", create=True), \
+                 mock.patch.object(curses, "ACS_LLCORNER", "+", create=True), \
+                 mock.patch.object(curses, "ACS_LRCORNER", "+", create=True):
+                tui.draw_comments_panel(fake, 0, 0, 8, 42)
             rendered = " ".join(fake.lines)
             self.assertIn("评论加载失败", rendered)
             self.assertIn("浏览器", rendered)
 
     def test_draw_comments_panel_renders_empty_loaded_state(self) -> None:
+        import curses
+
         class FakeWindow:
             def __init__(self) -> None:
                 self.lines: list[str] = []
@@ -1396,6 +1449,15 @@ class TUIStateTests(unittest.TestCase):
                 return self
 
             def box(self) -> None:
+                return None
+
+            def addch(self, *_args, **_kwargs) -> None:
+                return None
+
+            def hline(self, *_args, **_kwargs) -> None:
+                return None
+
+            def vline(self, *_args, **_kwargs) -> None:
                 return None
 
             def addnstr(self, _y: int, _x: int, text: str, *_args) -> None:
@@ -1410,7 +1472,13 @@ class TUIStateTests(unittest.TestCase):
             tui.comment_cache[key] = []
             tui.comment_loaded.add(key)
             fake = FakeWindow()
-            tui.draw_comments_panel(fake, 0, 0, 8, 42)
+            with mock.patch.object(curses, "ACS_HLINE", "-", create=True), \
+                 mock.patch.object(curses, "ACS_VLINE", "|", create=True), \
+                 mock.patch.object(curses, "ACS_ULCORNER", "+", create=True), \
+                 mock.patch.object(curses, "ACS_URCORNER", "+", create=True), \
+                 mock.patch.object(curses, "ACS_LLCORNER", "+", create=True), \
+                 mock.patch.object(curses, "ACS_LRCORNER", "+", create=True):
+                tui.draw_comments_panel(fake, 0, 0, 8, 42)
             rendered = " ".join(fake.lines)
             self.assertIn("暂无可显示热评", rendered)
 

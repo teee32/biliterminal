@@ -174,7 +174,9 @@ def try_kill_session(session: str) -> None:
 
 def capture_scenario(scenario: Scenario) -> str:
     try_kill_session(scenario.session)
-    command = f"cd {ROOT} && python3 -m bili_terminal tui"
+    # tmux 文本 capture 读不到 curses ACS 框线（会变成 q/x/l 字母），
+    # 故让被截图的 TUI 改用 Unicode 圆角框线，本生成器的解析器按单宽渲染正常
+    command = f"cd {ROOT} && BILITERMINAL_UNICODE_BORDERS=1 python3 -m bili_terminal tui"
     run_tmux(
         "new-session",
         "-d",

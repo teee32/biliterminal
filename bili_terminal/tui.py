@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import queue
 import threading
 import webbrowser
@@ -24,6 +25,12 @@ TICK_MS = 100
 STATUS_TTL_TICKS = 120
 COMMENT_DEBOUNCE_TICKS = 4
 SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+# 框线默认走 curses ACS 备用字符集（VT100 line-drawing），终端按内建图形渲染、
+# 必占 1 格，绕过 Unicode 歧义宽度，避免 Ghostty 等终端把框撑散。
+# 截图工具通过 tmux 文本 capture 取像，读不到 ACS（会显示成 q/x/l 等字母），
+# 故提供该开关让其改用 Unicode 圆角框线（生成器自己的解析器按单宽渲染，正常）。
+USE_UNICODE_BORDERS = os.environ.get("BILITERMINAL_UNICODE_BORDERS") == "1"
 
 HOME_CHANNELS: list[dict[str, Any]] = [
     {"label": "首页", "source": "recommend"},
@@ -816,7 +823,7 @@ class BilibiliTUI:
         lines = [
             "帮助",
             "",
-            "── 列表视图 ──",
+            "╌╌ 列表视图 ╌╌",
             "j / k, ↑ / ↓   移动选中项（自动加载热评）",
             "Enter          打开详情页",
             "Esc / b        返回上一个列表",
@@ -831,12 +838,12 @@ class BilibiliTUI:
             "d              使用默认搜索词搜索",
             "r              刷新当前页",
             "",
-            "── 详情视图 ──",
+            "╌╌ 详情视图 ╌╌",
             "j / k          滚动，PgUp/PgDn 翻页",
             "r / c          刷新详情评论",
             "Esc / b        返回列表",
             "",
-            "── 通用 ──",
+            "╌╌ 通用 ╌╌",
             "f 收藏  a 播放/暂停音频  x 停止音频",
             "o 浏览器打开  c 加载评论  ? 帮助  q 退出",
             "",
@@ -855,7 +862,7 @@ class BilibiliTUI:
         for index, line in enumerate(lines[: box_height - 2], start=1):
             if index == 1:
                 attr = self.attr("brand")
-            elif line.startswith("──"):
+            elif line.startswith("╌╌"):
                 attr = self.attr("section")
             elif line.startswith("最近搜索"):
                 attr = self.attr("muted")
@@ -865,6 +872,20 @@ class BilibiliTUI:
                 win.addnstr(index, 2, line, box_width - 4, attr)
             except curses.error:
                 pass
+
+    def _hline(self, stdscr: Any, y: int, x: int, width: int, attr: int) -> None:
+        """画一条水平分隔线，默认走 ACS（避免歧义宽度错位），截图模式用 Unicode。"""
+        import curses
+
+        if width <= 0:
+            return
+        try:
+            if USE_UNICODE_BORDERS:
+                stdscr.addnstr(y, x, "─" * width, width, attr)
+            else:
+                stdscr.hline(y, x, curses.ACS_HLINE, width, attr)
+        except curses.error:
+            pass
 
     def draw_box(
         self,
@@ -884,19 +905,36 @@ class BilibiliTUI:
             return
 
         border_attr = self.attr("accent") if selected else self.attr("border")
-        top = "╭" + "─" * (width - 2) + "╮"
-        bottom = "╰" + "─" * (width - 2) + "╯"
 
         try:
-            stdscr.addnstr(y, x, top, width, border_attr)
-            for i in range(1, height - 1):
-                stdscr.addnstr(y + i, x, "│", 1, border_attr)
-                stdscr.addnstr(y + i, x + width - 1, "│", 1, border_attr)
-            stdscr.addnstr(y + height - 1, x, bottom, width, border_attr)
+            if USE_UNICODE_BORDERS:
+                # 仅供截图工具：用 Unicode 圆角框线（生成器解析器按单宽渲染，正常）
+                top = "╭" + "─" * (width - 2) + "╮"
+                bottom = "╰" + "─" * (width - 2) + "╯"
+                stdscr.addnstr(y, x, top, width, border_attr)
+                for i in range(1, height - 1):
+                    stdscr.addnstr(y + i, x, "│", 1, border_attr)
+                    stdscr.addnstr(y + i, x + width - 1, "│", 1, border_attr)
+                stdscr.addnstr(y + height - 1, x, bottom, width, border_attr)
+            else:
+                # 默认：curses ACS 备用字符集（VT100 line-drawing），走 ESC(0 路径，
+                # 终端按内建图形字符渲染、必定占 1 格，完全绕过 Unicode 歧义宽度，
+                # Ghostty 等把歧义宽度按双宽渲染的终端不会再把框线撑散/错位。
+                stdscr.addch(y, x, curses.ACS_ULCORNER, border_attr)
+                stdscr.addch(y, x + width - 1, curses.ACS_URCORNER, border_attr)
+                stdscr.addch(y + height - 1, x, curses.ACS_LLCORNER, border_attr)
+                stdscr.addch(y + height - 1, x + width - 1, curses.ACS_LRCORNER, border_attr)
+                if width > 2:
+                    stdscr.hline(y, x + 1, curses.ACS_HLINE, width - 2, border_attr)
+                    stdscr.hline(y + height - 1, x + 1, curses.ACS_HLINE, width - 2, border_attr)
+                if height > 2:
+                    stdscr.vline(y + 1, x, curses.ACS_VLINE, height - 2, border_attr)
+                    stdscr.vline(y + 1, x + width - 1, curses.ACS_VLINE, height - 2, border_attr)
         except curses.error:
             pass
 
         if label:
+            # 标签连接符 ╴╶ 是明确单宽（EAW=N），各终端一致，可安全保留
             label_text = f"╴{label}╶"
             if label_attr is not None:
                 resolved_label_attr = label_attr
@@ -1190,6 +1228,8 @@ class BilibiliTUI:
             stdscr.addnstr(start_y + offset, start_x, line, width, attr)
 
     def draw_favorites_list(self, stdscr: Any, y: int, x: int, height: int, width: int) -> None:
+        import curses
+
         label = f"收藏列表 ⋅ {len(self.items)}"
         self.draw_box(stdscr, y, x, height, width, label)
         if height < 4:
@@ -1222,7 +1262,7 @@ class BilibiliTUI:
                 cursor += 1
 
             if cursor < y + height - 1:
-                stdscr.addnstr(cursor, x + 2, "┄" * max(1, min(width - 4, width - 4)), width - 4, self.attr("border"))
+                self._hline(stdscr, cursor, x + 2, max(1, width - 4), self.attr("border"))
                 cursor += 1
 
     def draw_favorites_view(self, stdscr: Any, height: int, width: int) -> None:
@@ -1311,9 +1351,11 @@ class BilibiliTUI:
             stdscr.addnstr(y, hint_x, hint, width - hint_x - 1, hint_attr)
 
     def draw_split_view(self, stdscr: Any, height: int, width: int) -> None:
+        import curses
+
         self._draw_top_bar(stdscr, width, "哔哩哔哩终端", f"{self.mode_token()} ⋅ 第 {self.page} 页")
         self._draw_tab_row(stdscr, 1, width)
-        stdscr.addnstr(2, 0, "─" * max(1, width - 1), width - 1, self.attr("border"))
+        self._hline(stdscr, 2, 0, max(1, width - 1), self.attr("border"))
 
         banner_height = self.draw_banner(stdscr, 3, width)
         chips_height = self.draw_category_row(stdscr, 3 + banner_height, width)
@@ -1410,7 +1452,7 @@ class BilibiliTUI:
             else:
                 self.draw_split_view(stdscr, height, width)
 
-            stdscr.addnstr(height - 2, 0, "─" * max(1, width - 1), width - 1, self.attr("border"))
+            self._hline(stdscr, height - 2, 0, max(1, width - 1), self.attr("border"))
             if self.detail_mode:
                 shortcuts = "j/k 滚动  a 播放/暂停  x 停止  f 收藏  o 浏览器打开  r/c 刷新评论  b 返回  q 退出"
             elif self.mode == "favorites":
