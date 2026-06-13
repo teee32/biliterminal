@@ -88,11 +88,9 @@ def print_comments(item: VideoItem, comments: list[CommentItem]) -> None:
 
 
 def build_detail_lines(item: VideoItem, width: int) -> list[str]:
-    title_lines = wrap_display(item.title, width=max(20, width))
+    # 标题由详情视图单独固定在顶部，这里不再重复输出
     description_lines = wrap_display(item.description, width=max(20, width)) if item.description else ["无简介"]
     return [
-        *title_lines,
-        "",
         f"👤 UP主: {item.author}",
         f"🔗 BV号: {item.bvid or '-'}",
         f"🔗 AID: {item.aid or '-'}",

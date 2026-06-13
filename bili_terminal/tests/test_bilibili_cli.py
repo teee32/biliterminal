@@ -177,7 +177,14 @@ class FormattingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             with mock.patch.dict(os.environ, {"BILITERMINAL_STATE_DIR": temp_dir}, clear=False):
                 cli.save_audio_playback_state(
-                    cli.AudioPlaybackState(pid=1234, title="标题", video_key="BV1xx411c7mu", paused=True, control_pid=5678)
+                    cli.AudioPlaybackState(
+                        pid=1234,
+                        title="标题",
+                        video_key="BV1xx411c7mu",
+                        paused=True,
+                        control_pid=5678,
+                        ipc_socket="/tmp/mpv-1234.sock",
+                    )
                 )
                 state = cli.load_audio_playback_state()
         self.assertIsNotNone(state)
@@ -187,6 +194,7 @@ class FormattingTests(unittest.TestCase):
         self.assertEqual(state.backend, "process")
         self.assertTrue(state.paused)
         self.assertEqual(state.control_pid, 5678)
+        self.assertEqual(state.ipc_socket, "/tmp/mpv-1234.sock")
 
     @mock.patch.object(audio, "pid_exists", return_value=True)
     def test_save_and_load_audio_playback_state_with_media_path(self, _mock_exists: mock.MagicMock) -> None:
@@ -590,24 +598,18 @@ class ClientTests(unittest.TestCase):
         mock_save.assert_called_once_with(state)
         self.assertIn("已继续播放音频", message)
 
-    @mock.patch.object(audio, "cleanup_audio_media_path")
     @mock.patch.object(audio, "save_audio_playback_state")
     @mock.patch.object(audio, "load_audio_playback_state")
-    @mock.patch.object(audio, "download_audio_to_path")
-    @mock.patch.object(audio, "prepare_audio_temp_path", return_value="/tmp/audio.m4a")
     @mock.patch.object(audio, "macos_audio_helper_path", return_value="/tmp/biliterminal-audio-helper")
-    @mock.patch.object(audio, "build_audio_player_command", return_value=None)
+    @mock.patch.object(audio.shutil, "which", return_value=None)
     @mock.patch.object(audio.subprocess, "Popen")
-    def test_run_audio_worker_switches_to_macos_native_helper(
+    def test_run_audio_worker_streams_via_macos_native_helper(
         self,
         mock_popen: mock.MagicMock,
-        _mock_build_command: mock.MagicMock,
+        _mock_which: mock.MagicMock,
         _mock_helper_path: mock.MagicMock,
-        _mock_prepare_path: mock.MagicMock,
-        mock_download: mock.MagicMock,
         mock_load: mock.MagicMock,
         mock_save: mock.MagicMock,
-        mock_cleanup: mock.MagicMock,
     ) -> None:
         helper_process = mock.MagicMock()
         helper_process.pid = 9988
@@ -616,9 +618,15 @@ class ClientTests(unittest.TestCase):
         mock_load.return_value = cli.AudioPlaybackState(pid=4321, title="标题", video_key="BV1xx411c7mu")
         result = cli.run_audio_worker("https://example.com/audio.m4s", "https://www.bilibili.com/video/BV1", "UA", "标题")
         self.assertEqual(result, 0)
-        mock_download.assert_called_once()
         mock_popen.assert_called_once_with(
-            ["/tmp/biliterminal-audio-helper", "/tmp/audio.m4a"],
+            [
+                "/tmp/biliterminal-audio-helper",
+                "--stream",
+                "https://example.com/audio.m4s",
+                "https://www.bilibili.com/video/BV1",
+                "UA",
+                "audio/mp4",
+            ],
             stdout=cli.subprocess.DEVNULL,
             stderr=cli.subprocess.DEVNULL,
             stdin=cli.subprocess.DEVNULL,
@@ -627,36 +635,129 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(saved_state.title, "标题")
         self.assertEqual(saved_state.video_key, "BV1xx411c7mu")
         self.assertEqual(saved_state.backend, "macos-native")
-        self.assertEqual(saved_state.media_path, "/tmp/audio.m4a")
+        self.assertIsNone(saved_state.media_path)
         self.assertEqual(saved_state.pid, os.getpid())
         self.assertEqual(saved_state.control_pid, helper_process.pid)
+
+    @mock.patch.object(audio, "cleanup_audio_media_path")
+    @mock.patch.object(audio, "save_audio_playback_state")
+    @mock.patch.object(audio, "load_audio_playback_state")
+    @mock.patch.object(audio, "download_audio_to_path")
+    @mock.patch.object(audio, "prepare_audio_temp_path", return_value="/tmp/audio.m4a")
+    @mock.patch.object(audio, "macos_audio_helper_path", return_value="/tmp/biliterminal-audio-helper")
+    @mock.patch.object(audio.shutil, "which", return_value=None)
+    @mock.patch.object(audio.subprocess, "Popen")
+    def test_run_audio_worker_falls_back_to_download_when_stream_fails(
+        self,
+        mock_popen: mock.MagicMock,
+        _mock_which: mock.MagicMock,
+        _mock_helper_path: mock.MagicMock,
+        _mock_prepare_path: mock.MagicMock,
+        mock_download: mock.MagicMock,
+        mock_load: mock.MagicMock,
+        _mock_save: mock.MagicMock,
+        mock_cleanup: mock.MagicMock,
+    ) -> None:
+        stream_process = mock.MagicMock()
+        stream_process.pid = 9988
+        stream_process.wait.return_value = 1
+        file_process = mock.MagicMock()
+        file_process.pid = 9989
+        file_process.wait.return_value = 0
+        mock_popen.side_effect = [stream_process, file_process]
+        mock_load.return_value = cli.AudioPlaybackState(pid=os.getpid(), title="标题", video_key="BV1xx411c7mu")
+        result = cli.run_audio_worker("https://example.com/audio.m4s", "https://www.bilibili.com/video/BV1", "UA", "标题")
+        self.assertEqual(result, 0)
+        mock_download.assert_called_once()
+        self.assertEqual(mock_popen.call_count, 2)
+        self.assertEqual(
+            mock_popen.call_args_list[1].args[0],
+            ["/tmp/biliterminal-audio-helper", "/tmp/audio.m4a"],
+        )
         mock_cleanup.assert_called_once_with("/tmp/audio.m4a")
 
     @mock.patch.object(audio, "save_audio_playback_state")
     @mock.patch.object(audio, "load_audio_playback_state")
-    @mock.patch.object(audio, "build_audio_player_command")
     @mock.patch.object(audio.subprocess, "Popen")
     def test_run_audio_worker_uses_direct_video_key_without_state_read(
         self,
         mock_popen: mock.MagicMock,
-        mock_build_command: mock.MagicMock,
         mock_load: mock.MagicMock,
         mock_save: mock.MagicMock,
     ) -> None:
-        mock_build_command.return_value = ["mpv", "--no-video", "url"]
         player = mock.MagicMock()
         player.pid = 4242
         player.wait.return_value = 0
         mock_popen.return_value = player
-        result = cli.run_audio_worker(
-            "https://example.com/audio.m4s", "https://www.bilibili.com/video/BV1", "UA", "标题",
-            video_key="BV1xx411c7mu",
-        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with mock.patch.dict(os.environ, {"BILITERMINAL_STATE_DIR": temp_dir}, clear=False):
+                with mock.patch.object(audio.shutil, "which", side_effect=lambda name: "/usr/local/bin/mpv" if name == "mpv" else None):
+                    result = cli.run_audio_worker(
+                        "https://example.com/audio.m4s", "https://www.bilibili.com/video/BV1", "UA", "标题",
+                        video_key="BV1xx411c7mu",
+                    )
         self.assertEqual(result, 0)
         mock_load.assert_not_called()
         saved_state = mock_save.call_args.args[0]
         self.assertEqual(saved_state.video_key, "BV1xx411c7mu")
         self.assertEqual(saved_state.control_pid, 4242)
+        self.assertIsNotNone(saved_state.ipc_socket)
+        command = mock_popen.call_args.args[0]
+        self.assertEqual(command[0], "mpv")
+        self.assertIn(f"--input-ipc-server={saved_state.ipc_socket}", command)
+
+    @mock.patch.object(audio, "save_audio_playback_state")
+    @mock.patch.object(audio, "send_audio_signal")
+    @mock.patch.object(audio, "set_mpv_paused", return_value=True)
+    @mock.patch.object(audio, "load_audio_playback_state")
+    def test_pause_audio_playback_prefers_mpv_ipc(
+        self,
+        mock_load: mock.MagicMock,
+        mock_ipc: mock.MagicMock,
+        mock_signal: mock.MagicMock,
+        mock_save: mock.MagicMock,
+    ) -> None:
+        state = cli.AudioPlaybackState(
+            pid=4321,
+            title="标题",
+            video_key="BV1xx411c7mu",
+            backend="process",
+            paused=False,
+            control_pid=8765,
+            ipc_socket="/tmp/mpv.sock",
+        )
+        mock_load.return_value = state
+        message = cli.pause_audio_playback()
+        mock_ipc.assert_called_once_with(state, True)
+        mock_signal.assert_not_called()
+        self.assertTrue(state.paused)
+        mock_save.assert_called_once_with(state)
+        self.assertIn("已暂停音频", message)
+
+    @mock.patch.object(audio, "save_audio_playback_state")
+    @mock.patch.object(audio, "send_audio_signal")
+    @mock.patch.object(audio, "set_mpv_paused", return_value=False)
+    @mock.patch.object(audio, "load_audio_playback_state")
+    def test_pause_audio_playback_falls_back_to_signal_without_ipc(
+        self,
+        mock_load: mock.MagicMock,
+        _mock_ipc: mock.MagicMock,
+        mock_signal: mock.MagicMock,
+        mock_save: mock.MagicMock,
+    ) -> None:
+        state = cli.AudioPlaybackState(
+            pid=4321,
+            title="标题",
+            video_key="BV1xx411c7mu",
+            backend="process",
+            paused=False,
+            control_pid=8765,
+        )
+        mock_load.return_value = state
+        cli.pause_audio_playback()
+        mock_signal.assert_called_once_with(8765, cli.signal.SIGSTOP)
+        self.assertTrue(state.paused)
+        mock_save.assert_called_once_with(state)
 
 
 class ShellTests(unittest.TestCase):
@@ -940,6 +1041,10 @@ class TUIStateTests(unittest.TestCase):
             COLOR_BLACK = 0
             COLOR_WHITE = 7
             COLOR_MAGENTA = 5
+            COLOR_CYAN = 6
+            COLOR_YELLOW = 3
+            COLOR_GREEN = 2
+            COLOR_RED = 1
             COLORS = 16
             error = RuntimeError
 

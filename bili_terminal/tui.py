@@ -71,6 +71,8 @@ class BilibiliTUI:
         self._comment_inflight: set[str] = set()
         self._detail_lines_cache: tuple[Any, list[str]] | None = None
         self._dirty = True
+        self._audio_state = None
+        self._audio_poll = 0
 
     # ---------- async plumbing ----------
 
@@ -123,6 +125,15 @@ class BilibiliTUI:
         elif self._comment_delay == 0:
             self._comment_delay = -1
             self._start_comment_load()
+        # 每秒轮询一次播放状态，让顶栏的正在播放指示跟上外部变化
+        self._audio_poll += 1
+        if self._audio_poll >= 10:
+            self._audio_poll = 0
+            previous = (self._audio_state.title, self._audio_state.paused) if self._audio_state else None
+            self._refresh_audio_state()
+            current = (self._audio_state.title, self._audio_state.paused) if self._audio_state else None
+            if previous != current:
+                self._dirty = True
 
     def _schedule_comment_load(self, *, immediate: bool = False) -> None:
         self._comment_delay = 0 if immediate else COMMENT_DEBOUNCE_TICKS
@@ -188,6 +199,18 @@ class BilibiliTUI:
 
     # ---------- theming ----------
 
+    # 256 色终端下的 xterm 调色板索引；16 色终端退化到基础色
+    PALETTE_256 = {
+        "pink": 204,
+        "text": 231,
+        "blue": 39,
+        "gold": 220,
+        "green": 114,
+        "red": 203,
+        "border": 240,
+        "muted": 246,
+    }
+
     def init_theme(self) -> None:
         import curses
 
@@ -196,42 +219,88 @@ class BilibiliTUI:
             return
         curses.start_color()
         curses.use_default_colors()
-        theme_color = 13 if getattr(curses, "COLORS", 0) >= 16 else curses.COLOR_MAGENTA
-        if curses.can_change_color() and theme_color < getattr(curses, "COLORS", 0):
-            try:
-                curses.init_color(theme_color, *BILIBILI_PINK_RGB)
-            except curses.error:
-                pass
-        curses.init_pair(1, curses.COLOR_WHITE, theme_color)
-        curses.init_pair(2, theme_color, -1)
-        curses.init_pair(3, curses.COLOR_WHITE, -1)
-        curses.init_pair(4, curses.COLOR_BLACK, theme_color)
+        colors = getattr(curses, "COLORS", 8)
+
+        if colors >= 256:
+            p = self.PALETTE_256
+            pink, text = p["pink"], p["text"]
+            blue, gold, green, red = p["blue"], p["gold"], p["green"], p["red"]
+            border, muted = p["border"], p["muted"]
+            selected_fg = text
+        else:
+            pink = 13 if colors >= 16 else curses.COLOR_MAGENTA
+            if curses.can_change_color() and pink < colors:
+                try:
+                    curses.init_color(pink, *BILIBILI_PINK_RGB)
+                except curses.error:
+                    pass
+            text = curses.COLOR_WHITE
+            blue, gold = curses.COLOR_CYAN, curses.COLOR_YELLOW
+            green, red = curses.COLOR_GREEN, curses.COLOR_RED
+            border = muted = -1
+            selected_fg = curses.COLOR_BLACK
+
+        curses.init_pair(1, text, pink)          # header: 白字粉底
+        curses.init_pair(2, pink, -1)            # accent: 粉色强调
+        curses.init_pair(3, text, -1)            # title: 高亮标题
+        curses.init_pair(4, selected_fg, pink)   # selected: 选中反白
+        curses.init_pair(5, blue, -1)            # info: 次级信息（UP主/数据）
+        curses.init_pair(6, gold, -1)            # star: 收藏星标
+        curses.init_pair(7, green, -1)           # ok: 成功状态
+        curses.init_pair(8, red, -1)             # err: 错误状态
+        curses.init_pair(9, border, -1)          # border: 边框
+        curses.init_pair(10, muted, -1)          # muted: 弱化文本
+        curses.init_pair(11, pink, text)         # tab_active: 粉字白底
+        self._dim_extras = colors < 256          # 16 色没有专用灰，用 A_DIM 模拟
         self.use_colors = True
 
-    def attr_header(self) -> int:
+    def attr(self, name: str) -> int:
         import curses
 
-        return curses.color_pair(1) | curses.A_BOLD if self.use_colors else curses.A_REVERSE
+        if not self.use_colors:
+            return {
+                "header": curses.A_REVERSE | curses.A_BOLD,
+                "accent": curses.A_BOLD,
+                "title": curses.A_BOLD,
+                "selected": curses.A_REVERSE,
+                "info": curses.A_NORMAL,
+                "star": curses.A_BOLD,
+                "ok": curses.A_NORMAL,
+                "err": curses.A_BOLD,
+                "border": curses.A_DIM,
+                "muted": curses.A_DIM,
+                "tab_active": curses.A_REVERSE | curses.A_BOLD,
+            }.get(name, curses.A_NORMAL)
+        pair_map = {
+            "header": (1, curses.A_BOLD),
+            "accent": (2, curses.A_BOLD),
+            "title": (3, curses.A_BOLD),
+            "selected": (4, curses.A_BOLD),
+            "info": (5, 0),
+            "star": (6, curses.A_BOLD),
+            "ok": (7, 0),
+            "err": (8, curses.A_BOLD),
+            "border": (9, curses.A_DIM if getattr(self, "_dim_extras", False) else 0),
+            "muted": (10, curses.A_DIM if getattr(self, "_dim_extras", False) else 0),
+            "tab_active": (11, curses.A_BOLD),
+        }
+        pair, extra = pair_map.get(name, (3, 0))
+        return curses.color_pair(pair) | extra
+
+    def attr_header(self) -> int:
+        return self.attr("header")
 
     def attr_accent(self) -> int:
-        import curses
-
-        return curses.color_pair(2) | curses.A_BOLD if self.use_colors else curses.A_BOLD
+        return self.attr("accent")
 
     def attr_title(self) -> int:
-        import curses
-
-        return curses.color_pair(3) | curses.A_BOLD if self.use_colors else curses.A_BOLD
+        return self.attr("title")
 
     def attr_selected(self) -> int:
-        import curses
-
-        return curses.color_pair(4) | curses.A_BOLD if self.use_colors else curses.A_REVERSE
+        return self.attr("selected")
 
     def attr_muted(self) -> int:
-        import curses
-
-        return curses.A_DIM
+        return self.attr("muted")
 
     # ---------- state helpers ----------
 
@@ -568,6 +637,7 @@ class BilibiliTUI:
             return
         self.history_store.add_video(item)
         self.set_status(audio.audio_action_for_item(self.client, item))
+        self._refresh_audio_state()
 
     def play_selected_audio_async(self) -> None:
         item = self.current_detail_item() if self.detail_mode else self.selected_item
@@ -575,14 +645,20 @@ class BilibiliTUI:
             self.set_status("当前没有可播放音频的视频")
             return
         self.history_store.add_video(item)
+
+        def apply(message: str) -> None:
+            self.set_status(message)
+            self._refresh_audio_state()
+
         self._submit(
             lambda: audio.audio_action_for_item(self.client, item),
-            lambda message: self.set_status(message),
+            apply,
             "正在解析音频流...",
         )
 
     def stop_audio(self) -> None:
         self.set_status(audio.stop_audio_playback())
+        self._refresh_audio_state()
 
     def open_selected(self) -> None:
         item = self.selected_item
@@ -727,7 +803,7 @@ class BilibiliTUI:
         import curses
 
         lines = [
-            "帮助",
+            "✦ 帮助 ✦",
             "",
             "── 列表视图 ──",
             "j / k, ↑ / ↓   移动选中项（自动加载热评）",
@@ -761,54 +837,86 @@ class BilibiliTUI:
         start_x = max(2, (width - box_width) // 2)
         win = stdscr.derwin(box_height, box_width, start_y, start_x)
         win.erase()
-        if self.use_colors:
-            win.bkgd(" ", self.attr_header())
-        win.box()
+        try:
+            win.box()
+        except curses.error:
+            pass
         for index, line in enumerate(lines[: box_height - 2], start=1):
-            attr = self.attr_title() if index == 1 else curses.A_NORMAL
+            if index == 1:
+                attr = self.attr("accent") | curses.A_BOLD
+            elif line.startswith("──"):
+                attr = self.attr("info")
+            elif line.startswith("最近搜索"):
+                attr = self.attr("muted")
+            else:
+                attr = curses.A_NORMAL
             try:
                 win.addnstr(index, 2, line, box_width - 4, attr)
             except curses.error:
                 pass
 
-    def draw_box(self, stdscr: Any, y: int, x: int, height: int, width: int, label: str | None = None) -> None:
+    def draw_box(
+        self,
+        stdscr: Any,
+        y: int,
+        x: int,
+        height: int,
+        width: int,
+        label: str | None = None,
+        *,
+        selected: bool = False,
+        label_attr: int | None = None,
+    ) -> None:
         import curses
 
         if height <= 1 or width <= 1:
             return
 
+        border_attr = self.attr("accent") if selected else self.attr("border")
         top = "╭" + "─" * (width - 2) + "╮"
         bottom = "╰" + "─" * (width - 2) + "╯"
 
         try:
-            stdscr.addnstr(y, x, top, width, self.attr_muted())
+            stdscr.addnstr(y, x, top, width, border_attr)
             for i in range(1, height - 1):
-                stdscr.addnstr(y + i, x, "│", 1, self.attr_muted())
-                stdscr.addnstr(y + i, x + width - 1, "│", 1, self.attr_muted())
-            stdscr.addnstr(y + height - 1, x, bottom, width, self.attr_muted())
+                stdscr.addnstr(y + i, x, "│", 1, border_attr)
+                stdscr.addnstr(y + i, x + width - 1, "│", 1, border_attr)
+            stdscr.addnstr(y + height - 1, x, bottom, width, border_attr)
         except curses.error:
             pass
 
         if label:
-            label_text = f" {label} "
+            label_text = f"╴{label}╶"
             try:
-                stdscr.addnstr(y, x + 2, label_text, width - 4, self.attr_accent())
+                stdscr.addnstr(y, x + 2, label_text, width - 4, label_attr if label_attr is not None else self.attr("accent"))
             except curses.error:
                 pass
+
+    def _now_playing_token(self, width: int) -> str | None:
+        if self._audio_state is None:
+            return None
+        icon = "⏸" if self._audio_state.paused else "♪"
+        return truncate_display(f"{icon} {self._audio_state.title}", max(8, width))
+
+    def _refresh_audio_state(self) -> None:
+        try:
+            self._audio_state = audio.load_audio_playback_state()
+        except Exception:  # noqa: BLE001 — 状态文件损坏不应拖垮界面
+            self._audio_state = None
 
     def draw_banner(self, stdscr: Any, y: int, width: int) -> int:
         banner_height = 6
         self.draw_box(stdscr, y, 0, banner_height, width, "发现")
-        headline = "哔哩哔哩终端首页"
-        stdscr.addnstr(y + 1, centered_x(width, headline, 2), headline, width - 4, self.attr_title())
+        headline = "✦ 哔哩哔哩 · 终端版 ✦"
+        stdscr.addnstr(y + 1, centered_x(width, headline, 2), headline, width - 4, self.attr("accent"))
         if self.mode == "search" and self.keyword:
             query = truncate_display(self.keyword, max(12, width - 24))
-            search_text = f" 搜索中：{query} "
+            search_text = f" 🔍 {query} "
         else:
             default_word = self.default_search_keyword or "按 / 开始搜索"
-            search_text = f" 默认搜索：{truncate_display(default_word, max(12, width - 24))} "
+            search_text = f" 🔍 {truncate_display(default_word, max(12, width - 24))} "
         search_x = centered_x(width, search_text, 2)
-        stdscr.addnstr(y + 2, search_x, search_text, max(1, width - search_x - 2), self.attr_selected())
+        stdscr.addnstr(y + 2, search_x, search_text, max(1, width - search_x - 2), self.attr("selected"))
         if self.mode == "hot":
             channel_label = self.active_channel()["label"]
         elif self.mode == "favorites":
@@ -817,15 +925,15 @@ class BilibiliTUI:
             channel_label = "最近浏览"
         else:
             channel_label = "搜索"
-        section_line = f"当前分区 · {channel_label}"
-        stdscr.addnstr(y + 3, centered_x(width, section_line, 2), section_line, width - 4, self.attr_accent())
+        section_line = f"─ {channel_label} · 第 {self.page} 页 ─"
+        stdscr.addnstr(y + 3, centered_x(width, section_line, 2), section_line, width - 4, self.attr("info"))
         hot_words = " · ".join(self.trending_keywords_cache[:3]) if self.trending_keywords_cache else "热点内容 · 分区导航 · 精选视频"
-        subline = f"热搜：{truncate_display(hot_words, max(16, width - 12))}"
-        stdscr.addnstr(y + 4, centered_x(width, subline, 2), subline, width - 4, self.attr_muted())
+        subline = f"🔥 {truncate_display(hot_words, max(16, width - 12))}"
+        stdscr.addnstr(y + 4, centered_x(width, subline, 2), subline, width - 4, self.attr("muted"))
         return banner_height
 
     def draw_category_row(self, stdscr: Any, y: int, width: int) -> int:
-        chips = [f"[{index + 1}.{channel['label']}]" for index, channel in enumerate(self.channels)]
+        chips = [f" {index + 1} {channel['label']} " for index, channel in enumerate(self.channels)]
         widths = [display_width(chip) for chip in chips]
         start = 0
         if self.mode == "hot":
@@ -844,7 +952,7 @@ class BilibiliTUI:
                 start += 1
         x = 0
         if start > 0:
-            stdscr.addnstr(y, x, "…", 1, self.attr_muted())
+            stdscr.addnstr(y, x, "‹", 1, self.attr("accent"))
             x += 2
         truncated = False
         for index in range(start, len(chips)):
@@ -853,30 +961,34 @@ class BilibiliTUI:
             if x + chip_width >= width - 2:
                 truncated = True
                 break
-            attr = self.attr_accent() if index == self.channel_index and self.mode == "hot" else self.attr_muted()
+            if index == self.channel_index and self.mode == "hot":
+                attr = self.attr("selected")
+            else:
+                attr = self.attr("muted")
             stdscr.addnstr(y, x, chip, chip_width, attr)
             x += chip_width + 1
         if truncated and x < width - 1:
-            stdscr.addnstr(y, x, "…", 1, self.attr_muted())
+            stdscr.addnstr(y, x, "›", 1, self.attr("accent"))
         return 1
 
     def selected_card_item(self) -> VideoItem | None:
         return self.selected_item
 
     def draw_featured_card(self, stdscr: Any, y: int, x: int, height: int, width: int, item: VideoItem | None, selected: bool) -> None:
-        self.draw_box(stdscr, y, x, height, width, "今日精选")
+        self.draw_box(stdscr, y, x, height, width, "✦ 今日精选", selected=selected)
         if item is None:
-            stdscr.addnstr(y + 2, x + 2, "没有可展示的内容", width - 4, self.attr_muted())
+            stdscr.addnstr(y + 2, x + 2, "没有可展示的内容", width - 4, self.attr("muted"))
             return
 
-        title_text = f"★ {item.title}" if self.history_store.is_favorite(item) else item.title
+        is_fav = self.history_store.is_favorite(item)
+        title_text = f"★ {item.title}" if is_fav else item.title
         if height < 9:
-            stdscr.addnstr(y + 1, x + 2, truncate_display(title_text, width - 4), width - 4, self.attr_title())
-            stdscr.addnstr(y + 2, x + 2, truncate_display(item.author, width - 4), width - 4, self.attr_muted())
-            stdscr.addnstr(y + height - 2, x + 2, "Enter 查看详情", width - 4, self.attr_muted())
+            stdscr.addnstr(y + 1, x + 2, truncate_display(title_text, width - 4), width - 4, self.attr("title"))
+            stdscr.addnstr(y + 2, x + 2, truncate_display(f"UP {item.author}", width - 4), width - 4, self.attr("info"))
+            stdscr.addnstr(y + height - 2, x + 2, "⏎ 查看详情", width - 4, self.attr("muted"))
             return
 
-        title_attr = self.attr_selected() if selected else self.attr_title()
+        title_attr = self.attr("selected") if selected else self.attr("title")
         title_lines = wrap_display(title_text, max(12, width - 4))
         content_y = y + 1
         max_title_lines = 2 if height < 16 else 3
@@ -885,27 +997,32 @@ class BilibiliTUI:
             stdscr.addnstr(content_y, x + 2, line, width - 4, title_attr)
             content_y += 1
 
+        stdscr.addnstr(content_y, x + 2, truncate_display(f"UP {item.author}", width - 4), width - 4, self.attr("info"))
+        content_y += 1
+        stats_line = truncate_display(
+            f"▶ {human_count(item.play)} 播放 · ≣ {human_count(item.danmaku)} 弹幕 · ◷ {item.duration}",
+            width - 4,
+        )
+        stdscr.addnstr(content_y, x + 2, stats_line, width - 4, self.attr("info"))
+        content_y += 1
         meta_lines = [
-            truncate_display(item.author, width - 4),
-            truncate_display(f"{human_count(item.play)} 播放   {human_count(item.danmaku)} 弹幕", width - 4),
-            truncate_display(f"{item.duration}   {format_timestamp(item.pubdate)}", width - 4),
-            truncate_display(f"稿件号 {item.bvid or item.aid}", width - 4),
+            truncate_display(f"{format_timestamp(item.pubdate)} · {item.bvid or item.aid}", width - 4),
         ]
         for meta_line in meta_lines:
-            stdscr.addnstr(content_y, x + 2, meta_line, width - 4, self.attr_muted())
+            stdscr.addnstr(content_y, x + 2, meta_line, width - 4, self.attr("muted"))
             content_y += 1
 
         sections: list[tuple[str, list[str]]] = []
         desc_lines = wrap_display(item.description or "暂无简介", width=max(12, width - 4))
-        sections.append(("简介", desc_lines))
+        sections.append(("¶ 简介", desc_lines))
 
         hot_lines = [f"{index + 1}. {word}" for index, word in enumerate(self.trending_keywords_cache[:6])]
         if hot_lines:
-            sections.append(("热搜速览", hot_lines))
+            sections.append(("🔥 热搜速览", hot_lines))
 
         recent_keywords = self.history_store.get_recent_keywords(3)
         if recent_keywords:
-            sections.append(("最近搜索", recent_keywords))
+            sections.append(("🔍 最近搜索", recent_keywords))
 
         recent_videos = [
             truncate_display(history_item.title, width - 4)
@@ -913,17 +1030,17 @@ class BilibiliTUI:
             if (history_item.bvid or history_item.aid) != (item.bvid or item.aid)
         ]
         if recent_videos:
-            sections.append(("最近浏览", recent_videos[:3]))
+            sections.append(("◷ 最近浏览", recent_videos[:3]))
 
-        sections.append(("快捷操作", ["Enter 查看详情", "a 播放/暂停音频", "x 停止音频", "f 收藏当前视频", "m 打开收藏夹"]))
+        sections.append(("⌘ 快捷操作", ["⏎ 查看详情", "a 播放/暂停音频", "x 停止音频", "f 收藏当前视频", "m 打开收藏夹"]))
 
         footer_y = y + height - 2
-        available_body_lines = max(0, footer_y - content_y)
-        body_cursor = content_y
+        available_body_lines = max(0, footer_y - content_y - 1)
+        body_cursor = content_y + 1
         for section_title, lines in sections:
             if available_body_lines <= 0:
                 break
-            stdscr.addnstr(body_cursor, x + 2, section_title, width - 4, self.attr_accent())
+            stdscr.addnstr(body_cursor, x + 2, section_title, width - 4, self.attr("accent"))
             body_cursor += 1
             available_body_lines -= 1
             if available_body_lines <= 0:
@@ -934,23 +1051,33 @@ class BilibiliTUI:
                 stdscr.addnstr(body_cursor, x + 2, truncate_display(line, width - 4), width - 4)
                 body_cursor += 1
                 available_body_lines -= 1
-        stdscr.addnstr(y + height - 2, x + 2, "Enter 查看详情", width - 4, self.attr_muted())
+        stdscr.addnstr(y + height - 2, x + 2, "⏎ 查看详情", width - 4, self.attr("muted"))
 
     def draw_grid_card(self, stdscr: Any, y: int, x: int, height: int, width: int, index: int, item: VideoItem, selected: bool) -> None:
         label = f"{index + 1:02d}"
-        self.draw_box(stdscr, y, x, height, width, label)
-        title_attr = self.attr_selected() if selected else self.attr_title()
-        title = f"★ {item.title}" if self.history_store.is_favorite(item) else item.title
+        self.draw_box(
+            stdscr,
+            y,
+            x,
+            height,
+            width,
+            label,
+            selected=selected,
+            label_attr=self.attr("selected") if selected else None,
+        )
+        title_attr = self.attr("selected") if selected else self.attr("title")
+        is_fav = self.history_store.is_favorite(item)
+        prefix = "★ " if is_fav else ""
+        pointer = "❯ " if selected else ""
+        title = f"{pointer}{prefix}{item.title}"
         stdscr.addnstr(y + 1, x + 2, truncate_display(title, width - 4), width - 4, title_attr)
-        stdscr.addnstr(y + 2, x + 2, truncate_display(item.author, width - 4), width - 4, self.attr_muted())
+        stdscr.addnstr(y + 2, x + 2, truncate_display(f"UP {item.author}", width - 4), width - 4, self.attr("info"))
         if height >= 5:
-            metrics = f"▶ {human_count(item.play)}  🕒 {item.duration}"
-            stdscr.addnstr(y + 3, x + 2, truncate_display(metrics, width - 4), width - 4, self.attr_muted())
-        if selected and height >= 5:
-            stdscr.addnstr(y + height - 2, x + 2, "当前选中", width - 4, self.attr_accent())
+            metrics = f"▶ {human_count(item.play)} · ◷ {item.duration}"
+            stdscr.addnstr(y + 3, x + 2, truncate_display(metrics, width - 4), width - 4, self.attr("muted"))
 
     def draw_comments_panel(self, stdscr: Any, y: int, x: int, height: int, width: int) -> None:
-        panel_label = "评论预览" if self.mode == "favorites" else "热评预览"
+        panel_label = "💬 评论预览" if self.mode == "favorites" else "💬 热评"
         self.draw_box(stdscr, y, x, height, width, panel_label)
         if height < 4:
             return
@@ -963,18 +1090,18 @@ class BilibiliTUI:
                 "按 c 重试，按 r 刷新页面",
             ]
             for index, line in enumerate(lines[: height - 2], start=1):
-                attr = self.attr_accent() if index == 1 else self.attr_muted()
+                attr = self.attr("err") if index == 1 else self.attr("muted")
                 stdscr.addnstr(y + index, x + 2, truncate_display(line, width - 4), width - 4, attr)
             return
         if not comments:
             if self.current_comments_loading():
-                stdscr.addnstr(y + 1, x + 2, "热评加载中...", width - 4, self.attr_muted())
+                stdscr.addnstr(y + 1, x + 2, "热评加载中...", width - 4, self.attr("muted"))
             elif self.current_comments_loaded():
-                stdscr.addnstr(y + 1, x + 2, "当前视频暂无可显示热评", width - 4, self.attr_muted())
-                stdscr.addnstr(y + 2, x + 2, "按 r 刷新页面，按 o 浏览器查看", width - 4, self.attr_muted())
+                stdscr.addnstr(y + 1, x + 2, "当前视频暂无可显示热评", width - 4, self.attr("muted"))
+                stdscr.addnstr(y + 2, x + 2, "按 r 刷新页面，按 o 浏览器查看", width - 4, self.attr("muted"))
             else:
-                stdscr.addnstr(y + 1, x + 2, "停留片刻自动加载热评", width - 4, self.attr_muted())
-                stdscr.addnstr(y + 2, x + 2, "按 c 立即加载，r 刷新当前视图", width - 4, self.attr_muted())
+                stdscr.addnstr(y + 1, x + 2, "停留片刻自动加载热评", width - 4, self.attr("muted"))
+                stdscr.addnstr(y + 2, x + 2, "按 c 立即加载，r 刷新当前视图", width - 4, self.attr("muted"))
             return
 
         cursor = y + 1
@@ -983,10 +1110,10 @@ class BilibiliTUI:
             if available <= 0:
                 break
             header = truncate_display(
-                f"{index}. {comment.author} · {human_count(comment.like)} 赞 · {format_timestamp(comment.ctime)}",
+                f"❝ {comment.author} · ♡ {human_count(comment.like)} · {format_timestamp(comment.ctime)}",
                 width - 4,
             )
-            stdscr.addnstr(cursor, x + 2, header, width - 4, self.attr_accent() if index == 1 else self.attr_muted())
+            stdscr.addnstr(cursor, x + 2, header, width - 4, self.attr("info") if index == 1 else self.attr("muted"))
             cursor += 1
             available -= 1
             if available <= 0:
@@ -1017,44 +1144,43 @@ class BilibiliTUI:
     def draw_detail_summary(self, stdscr: Any, start_y: int, start_x: int, width: int, height: int) -> None:
         item = self.current_detail_item()
         if item is None:
-            stdscr.addnstr(start_y, start_x, "当前没有选中的视频", width, self.attr_muted())
+            stdscr.addnstr(start_y, start_x, "当前没有选中的视频", width, self.attr("muted"))
             return
 
         title = f"★ {item.title}" if self.history_store.is_favorite(item) else item.title
         summary_lines = [
             title,
-            f"UP主 {item.author}",
-            f"播放 {human_count(item.play)}   弹幕 {human_count(item.danmaku)}   时长 {item.duration}",
-            f"发布时间 {format_timestamp(item.pubdate)}",
-            f"编号 {item.bvid or item.aid}",
+            f"UP {item.author}",
+            f"▶ {human_count(item.play)} 播放 · ≣ {human_count(item.danmaku)} 弹幕 · ◷ {item.duration}",
+            f"发布于 {format_timestamp(item.pubdate)} · {item.bvid or item.aid}",
             "",
-            "链接",
+            "🔗 链接",
             truncate_display(item.url, width=width),
             "",
-            "简介",
+            "¶ 简介",
         ]
         desc_lines = wrap_display(item.description or "暂无简介", width=max(20, width))
         lines = summary_lines + desc_lines
         for offset, line in enumerate(lines[:height]):
             if offset == 0:
-                attr = self.attr_title()
-            elif offset in (1, 2, 3, 4):
-                attr = self.attr_muted()
-            elif line in ("链接", "简介"):
-                attr = self.attr_accent()
+                attr = self.attr("title")
+            elif offset in (1, 2, 3):
+                attr = self.attr("info")
+            elif line in ("🔗 链接", "¶ 简介"):
+                attr = self.attr("accent")
             else:
                 attr = 0
             stdscr.addnstr(start_y + offset, start_x, line, width, attr)
 
     def draw_favorites_list(self, stdscr: Any, y: int, x: int, height: int, width: int) -> None:
-        label = f"收藏列表 · {len(self.items)} 条"
+        label = f"★ 收藏列表 · {len(self.items)}"
         self.draw_box(stdscr, y, x, height, width, label)
         if height < 4:
             return
         if not self.items:
-            stdscr.addnstr(y + 2, x + 2, "收藏夹还是空的", width - 4, self.attr_muted())
+            stdscr.addnstr(y + 2, x + 2, "收藏夹还是空的", width - 4, self.attr("muted"))
             if height >= 6:
-                stdscr.addnstr(y + 3, x + 2, "看到喜欢的视频时按 f 就能加入收藏。", width - 4, self.attr_muted())
+                stdscr.addnstr(y + 3, x + 2, "看到喜欢的视频时按 f 就能加入收藏。", width - 4, self.attr("muted"))
             return
 
         cursor = y + 1
@@ -1063,42 +1189,43 @@ class BilibiliTUI:
             if remaining < 2:
                 break
             selected = index == self.selected_index
-            prefix = "›" if selected else " "
-            title = f"{prefix} {index + 1}. "
-            title += f"★ {item.title}" if self.history_store.is_favorite(item) else item.title
-            title_attr = self.attr_selected() if selected else self.attr_title()
+            prefix = "❯ " if selected else "  "
+            title = f"{prefix}★ {item.title}"
+            title_attr = self.attr("selected") if selected else self.attr("title")
             stdscr.addnstr(cursor, x + 2, truncate_display(title, width - 4), width - 4, title_attr)
             cursor += 1
 
-            meta = f"{item.author} · {human_count(item.play)} 播放 · {item.duration}"
-            stdscr.addnstr(cursor, x + 2, truncate_display(meta, width - 4), width - 4, self.attr_muted())
+            meta = f"  {item.author} · ▶ {human_count(item.play)} · ◷ {item.duration}"
+            stdscr.addnstr(cursor, x + 2, truncate_display(meta, width - 4), width - 4, self.attr("info") if selected else self.attr("muted"))
             cursor += 1
 
             if remaining >= 4:
-                ref_line = f"{item.bvid or item.aid} · {format_timestamp(item.pubdate)}"
-                stdscr.addnstr(cursor, x + 2, truncate_display(ref_line, width - 4), width - 4, self.attr_muted())
+                ref_line = f"  {item.bvid or item.aid} · {format_timestamp(item.pubdate)}"
+                stdscr.addnstr(cursor, x + 2, truncate_display(ref_line, width - 4), width - 4, self.attr("muted"))
                 cursor += 1
 
             if cursor < y + height - 1:
-                stdscr.addnstr(cursor, x + 2, "·" * max(1, min(width - 4, 12)), width - 4, self.attr_muted())
+                stdscr.addnstr(cursor, x + 2, "┄" * max(1, min(width - 4, width - 4)), width - 4, self.attr("border"))
                 cursor += 1
 
     def draw_favorites_view(self, stdscr: Any, height: int, width: int) -> None:
-        header = " 我的收藏 "
-        header_right = f"共 {len(self.items)} 条"
-        stdscr.addnstr(0, 0, header, width - 1, self.attr_header())
-        right_x = max(0, width - display_width(header_right) - 1)
-        stdscr.addnstr(0, right_x, header_right, width - right_x - 1, self.attr_header())
+        self._draw_top_bar(stdscr, width, " ★ 我的收藏 ", f"共 {len(self.items)} 条 ")
 
         selected = self.selected_item
-        if selected is None:
+        now_playing = self._now_playing_token(max(10, width // 2))
+        if now_playing:
+            subtitle = now_playing
+            subtitle_attr = self.attr("ok") if self._audio_state and not self._audio_state.paused else self.attr("star")
+        elif selected is None:
             subtitle = "本地收藏，稍后可用 o 在浏览器继续看"
+            subtitle_attr = self.attr("muted")
         else:
             subtitle = truncate_display(
-                f"当前选中 · {selected.author} · {human_count(selected.play)} 播放 · a 播放/暂停音频 · x 停止 · o 浏览器打开",
+                f"当前选中 · {selected.author} · ▶ {human_count(selected.play)} · a 播放/暂停 · x 停止 · o 浏览器打开",
                 max(20, width - 2),
             )
-        stdscr.addnstr(1, 0, subtitle, width - 1, self.attr_muted())
+            subtitle_attr = self.attr("muted")
+        stdscr.addnstr(1, 1, subtitle, width - 2, subtitle_attr)
 
         content_top = 3
         content_height = max(1, height - content_top - 3)
@@ -1118,49 +1245,60 @@ class BilibiliTUI:
                 preview_height = content_height
                 comments_height = 0
 
-        self.draw_box(stdscr, content_top, right_x, preview_height, right_width, "视频预览")
+        self.draw_box(stdscr, content_top, right_x, preview_height, right_width, "▷ 视频预览")
         self.draw_detail_summary(stdscr, content_top + 1, right_x + 2, max(12, right_width - 4), max(1, preview_height - 2))
 
         if comments_height >= 5:
             self.draw_comments_panel(stdscr, content_top + preview_height, right_x, comments_height, right_width)
 
-    def draw_split_view(self, stdscr: Any, height: int, width: int) -> None:
-        import curses
+    def _draw_top_bar(self, stdscr: Any, width: int, title: str, right_text: str) -> None:
+        # 整行铺粉底，左标题右上下文
+        stdscr.addnstr(0, 0, " " * max(1, width - 1), width - 1, self.attr("header"))
+        stdscr.addnstr(0, 0, title, width - 1, self.attr("header"))
+        right_x = max(0, width - display_width(right_text) - 1)
+        if right_x > display_width(title):
+            stdscr.addnstr(0, right_x, right_text, width - right_x - 1, self.attr("header"))
 
-        header = " 哔哩哔哩终端首页 "
-        header_right = f"{self.mode_token()} · 第 {self.page} 页"
-        stdscr.addnstr(0, 0, header, width - 1, self.attr_header())
-        right_x = max(0, width - display_width(header_right) - 1)
-        stdscr.addnstr(0, right_x, header_right, width - right_x - 1, self.attr_header())
-        stdscr.addnstr(1, 0, " " * max(1, width - 1), width - 1, self.attr_muted())
+    def _draw_tab_row(self, stdscr: Any, y: int, width: int) -> None:
+        stdscr.addnstr(y, 0, " " * max(1, width - 1), width - 1)
         tabs = [
-            ("首页流", "hot"),
+            ("首页", "hot"),
             ("搜索", "search"),
-            ("历史记录", "history"),
-            ("收藏夹", "favorites"),
+            ("历史", "history"),
+            ("收藏", "favorites"),
         ]
-        tab_x = 0
+        tab_x = 1
         for label, mode in tabs:
-            chip = f"[{label}]"
+            active = self.mode == mode
+            chip = f" {label} "
             chip_width = display_width(chip)
             if tab_x + chip_width >= width - 1:
                 break
-            attr = self.attr_accent() if self.mode == mode else self.attr_muted()
-            stdscr.addnstr(1, tab_x, chip, chip_width, attr)
-            tab_x += chip_width + 2
-        if self.mode == "search" and self.keyword:
-            search_hint = f"当前搜索：{truncate_display(self.keyword, max(10, width // 4))}"
-        elif self.mode == "history":
-            search_hint = "按 v 查看最近浏览"
-        elif self.mode == "favorites":
-            search_hint = "按 a 播放/暂停音频，x 停止，o 打开"
-        else:
-            search_hint = "Tab 切换分区，1-9 直选，/ 搜索"
-        hint_x = max(0, width - display_width(search_hint) - 1)
-        if hint_x > tab_x:
-            stdscr.addnstr(1, hint_x, search_hint, width - hint_x - 1, self.attr_muted())
+            attr = self.attr("tab_active") if active else self.attr("muted")
+            stdscr.addnstr(y, tab_x, chip, chip_width, attr)
+            tab_x += chip_width + 1
 
-        stdscr.hline(2, 0, curses.ACS_HLINE, width)
+        now_playing = self._now_playing_token(max(10, width // 3))
+        if now_playing:
+            hint = now_playing
+            hint_attr = self.attr("ok") if self._audio_state and not self._audio_state.paused else self.attr("star")
+        elif self.mode == "search" and self.keyword:
+            hint = f"当前搜索：{truncate_display(self.keyword, max(10, width // 4))}"
+            hint_attr = self.attr("muted")
+        elif self.mode == "favorites":
+            hint = "a 播放/暂停 · x 停止 · o 打开"
+            hint_attr = self.attr("muted")
+        else:
+            hint = "Tab 切换分区 · / 搜索 · ? 帮助"
+            hint_attr = self.attr("muted")
+        hint_x = max(0, width - display_width(hint) - 1)
+        if hint_x > tab_x:
+            stdscr.addnstr(y, hint_x, hint, width - hint_x - 1, hint_attr)
+
+    def draw_split_view(self, stdscr: Any, height: int, width: int) -> None:
+        self._draw_top_bar(stdscr, width, " ◉ 哔哩哔哩终端 ", f"{self.mode_token()} · 第 {self.page} 页 ")
+        self._draw_tab_row(stdscr, 1, width)
+        stdscr.addnstr(2, 0, "─" * max(1, width - 1), width - 1, self.attr("border"))
 
         banner_height = self.draw_banner(stdscr, 3, width)
         chips_height = self.draw_category_row(stdscr, 3 + banner_height, width)
@@ -1209,17 +1347,11 @@ class BilibiliTUI:
             self.draw_comments_panel(stdscr, comments_y, right_x, comments_height, right_width)
 
     def draw_detail_view(self, stdscr: Any, height: int, width: int) -> None:
-        import curses
-
-        header = " 详情页 "
+        header = " ▷ 详情页 "
         header_right_full = "j/k 滚动  a 播放/暂停  x 停止  f 收藏  o 浏览器打开  c 刷新评论  Esc 返回  ? 帮助"
         header_right_compact = "j/k 滚动  Esc 返回  ? 帮助"
         header_right = header_right_full if display_width(header) + display_width(header_right_full) < width - 2 else header_right_compact
-        stdscr.addnstr(0, 0, header, width - 1, self.attr_header())
-        right_x = max(0, width - display_width(header_right) - 1)
-        if right_x > display_width(header):
-            stdscr.addnstr(0, right_x, header_right, width - right_x - 1, self.attr_header())
-        stdscr.hline(1, 0, curses.ACS_HLINE, width)
+        self._draw_top_bar(stdscr, width, header, header_right)
         item = self.current_detail_item()
         title = item.title if item else "没有结果"
         if item and self.history_store.is_favorite(item):
@@ -1227,16 +1359,23 @@ class BilibiliTUI:
         content_top = 2
         content_height = max(5, height - 5)
         self.draw_box(stdscr, content_top, 0, content_height, width, "视频详情")
-        stdscr.addnstr(content_top + 1, 2, truncate_display(title, width - 4), width - 4, self.attr_title())
+        stdscr.addnstr(content_top + 1, 2, truncate_display(title, width - 4), width - 4, self.attr("title"))
         detail_lines = self.get_detail_lines(max(20, width - 4))
         visible_capacity = max(1, content_height - 4)
         self.clamp_detail_scroll(width - 4, visible_capacity)
         visible_lines = detail_lines[self.detail_scroll : self.detail_scroll + visible_capacity]
         for offset, line in enumerate(visible_lines):
-            attr = self.attr_accent() if "简介:" in line else (self.attr_muted() if ":" in line and offset < 10 else 0)
+            if "💬 热评:" in line or "📝 简介:" in line:
+                attr = self.attr("accent")
+            elif line.startswith(("👤", "🔗", "🕒", "📅", "▶", "≡", "👍", "⭐", "🌐")):
+                attr = self.attr("info")
+            elif line.startswith(tuple(f"{n}. " for n in range(1, 10))) and "👍" in line:
+                attr = self.attr("accent")
+            else:
+                attr = 0
             stdscr.addnstr(content_top + 2 + offset, 2, line, width - 4, attr)
-        footer = f"滚动 {self.detail_scroll + 1}-{self.detail_scroll + len(visible_lines)} / {len(detail_lines)}"
-        stdscr.addnstr(content_top + content_height - 2, 2, footer, width - 4, self.attr_muted())
+        footer = f"⇕ {self.detail_scroll + 1}-{self.detail_scroll + len(visible_lines)} / {len(detail_lines)}"
+        stdscr.addnstr(content_top + content_height - 2, 2, footer, width - 4, self.attr("muted"))
 
     def draw(self, stdscr: Any) -> None:
         import curses
@@ -1256,21 +1395,31 @@ class BilibiliTUI:
             else:
                 self.draw_split_view(stdscr, height, width)
 
-            stdscr.hline(height - 2, 0, curses.ACS_HLINE, width)
+            stdscr.addnstr(height - 2, 0, "─" * max(1, width - 1), width - 1, self.attr("border"))
             if self.detail_mode:
                 shortcuts = "j/k 滚动  a 播放/暂停  x 停止  f 收藏  o 浏览器打开  r/c 刷新评论  b 返回  q 退出"
             elif self.mode == "favorites":
                 shortcuts = "j/k 移动  Enter 详情  a 播放/暂停  x 停止  f 取消收藏  o 浏览器打开  c 评论  b 返回  q 退出"
             else:
                 shortcuts = "Tab 分区  1-9 直选  / 搜索  a 播放/暂停  x 停止  f 收藏  m 收藏夹  c 评论  Enter 详情  q 退出"
-            stdscr.addnstr(height - 2, 2, shortcuts, width - 4, self.attr_muted())
+            stdscr.addnstr(height - 2, 2, shortcuts, width - 4, self.attr("muted"))
             if self._loading > 0:
                 spinner = SPINNER_FRAMES[self._spinner_index]
                 status_line = f"{spinner} {self.status}" if self.status else f"{spinner} 加载中..."
+                status_attr = self.attr("accent")
+            elif self.status:
+                # 根据状态语义着色：失败用红，完成用绿，其余强调色
+                if "失败" in self.status or "错误" in self.status:
+                    status_attr = self.attr("err")
+                elif self.status.startswith(("已", "已加载", "已收藏", "已停止", "已暂停", "已继续")):
+                    status_attr = self.attr("ok")
+                else:
+                    status_attr = self.attr("accent")
+                status_line = f"› {self.status}"
             else:
-                status_line = f"状态: {self.status}" if self.status else ""
+                status_line = ""
             if status_line:
-                stdscr.addnstr(height - 1, 0, status_line, width - 1, self.attr_accent())
+                stdscr.addnstr(height - 1, 0, status_line, width - 1, status_attr)
             if self.show_help:
                 self.draw_help_overlay(stdscr, height, width)
         except curses.error:
@@ -1404,6 +1553,7 @@ class BilibiliTUI:
         curses.curs_set(0)
         stdscr.keypad(True)
         stdscr.timeout(TICK_MS)
+        self._refresh_audio_state()
         self.start_load_items()
         self._dirty = True
         while True:
