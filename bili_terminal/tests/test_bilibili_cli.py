@@ -1076,8 +1076,9 @@ class TUIStateTests(unittest.TestCase):
             with mock.patch.dict(sys.modules, {"curses": fake_curses}):
                 tui.init_theme()
             self.assertIn(("init_color", 13, *cli.BILIBILI_PINK_RGB), fake_curses.calls)
-            self.assertIn(("init_pair", 1, fake_curses.COLOR_WHITE, 13), fake_curses.calls)
-            self.assertIn(("init_pair", 4, fake_curses.COLOR_BLACK, 13), fake_curses.calls)
+            # 品牌/选中都用粉色前景 + 透明背景，不再铺实心色块
+            self.assertIn(("init_pair", 1, 13, -1), fake_curses.calls)
+            self.assertIn(("init_pair", 4, 13, -1), fake_curses.calls)
             self.assertTrue(tui.use_colors)
 
     def test_load_items_uses_home_recommend_channel(self) -> None:
