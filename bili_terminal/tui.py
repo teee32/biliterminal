@@ -432,7 +432,7 @@ class BilibiliTUI:
         if comments:
             lines.extend(["", "💬 热评:"])
             for index, comment in enumerate(comments, start=1):
-                header = f"{index}. 👤 {comment.author} · 👍 {human_count(comment.like)} · 📅 {format_timestamp(comment.ctime)}"
+                header = f"{index}. 👤 {comment.author} ⋅ 👍 {human_count(comment.like)} ⋅ 📅 {format_timestamp(comment.ctime)}"
                 lines.append(header)
                 lines.extend(wrap_display(comment.message or "暂无评论内容", width=max(20, width)))
                 lines.append("")
@@ -912,7 +912,8 @@ class BilibiliTUI:
     def _now_playing_token(self, width: int) -> str | None:
         if self._audio_state is None:
             return None
-        icon = "⏸" if self._audio_state.paused else "♪"
+        # 用明确单宽符号，避免歧义宽度符号在不同终端下错位
+        icon = "⏸" if self._audio_state.paused else "▸"
         return truncate_display(f"{icon} {self._audio_state.title}", max(8, width))
 
     def _refresh_audio_state(self) -> None:
@@ -924,7 +925,7 @@ class BilibiliTUI:
     def draw_banner(self, stdscr: Any, y: int, width: int) -> int:
         banner_height = 6
         self.draw_box(stdscr, y, 0, banner_height, width, "发现")
-        headline = "哔哩哔哩 · 终端版"
+        headline = "哔哩哔哩 ⋅ 终端版"
         stdscr.addnstr(y + 1, centered_x(width, headline, 2), headline, width - 4, self.attr("brand"))
         if self.mode == "search" and self.keyword:
             query = truncate_display(self.keyword, max(12, width - 24))
@@ -942,9 +943,9 @@ class BilibiliTUI:
             channel_label = "最近浏览"
         else:
             channel_label = "搜索"
-        section_line = f"{channel_label} · 第 {self.page} 页"
+        section_line = f"{channel_label} ⋅ 第 {self.page} 页"
         stdscr.addnstr(y + 3, centered_x(width, section_line, 2), section_line, width - 4, self.attr("info"))
-        hot_words = " · ".join(self.trending_keywords_cache[:3]) if self.trending_keywords_cache else "热点内容 · 分区导航 · 精选视频"
+        hot_words = " ⋅ ".join(self.trending_keywords_cache[:3]) if self.trending_keywords_cache else "热点内容 ⋅ 分区导航 ⋅ 精选视频"
         subline = f"🔥 {truncate_display(hot_words, max(16, width - 12))}"
         stdscr.addnstr(y + 4, centered_x(width, subline, 2), subline, width - 4, self.attr("muted"))
         return banner_height
@@ -997,7 +998,7 @@ class BilibiliTUI:
             return
 
         is_fav = self.history_store.is_favorite(item)
-        title_text = f"★ {item.title}" if is_fav else item.title
+        title_text = f"✦ {item.title}" if is_fav else item.title
         if height < 9:
             stdscr.addnstr(y + 1, x + 2, truncate_display(title_text, width - 4), width - 4, self.attr("title"))
             stdscr.addnstr(y + 2, x + 2, truncate_display(f"UP {item.author}", width - 4), width - 4, self.attr("info"))
@@ -1016,13 +1017,13 @@ class BilibiliTUI:
         stdscr.addnstr(content_y, x + 2, truncate_display(f"UP {item.author}", width - 4), width - 4, self.attr("info"))
         content_y += 1
         stats_line = truncate_display(
-            f"▶ {human_count(item.play)} 播放 · ≣ {human_count(item.danmaku)} 弹幕 · ◷ {item.duration}",
+            f"▸ {human_count(item.play)} 播放 ⋅ ≣ {human_count(item.danmaku)} 弹幕 ⋅ ◷ {item.duration}",
             width - 4,
         )
         stdscr.addnstr(content_y, x + 2, stats_line, width - 4, self.attr("info"))
         content_y += 1
         meta_lines = [
-            truncate_display(f"{format_timestamp(item.pubdate)} · {item.bvid or item.aid}", width - 4),
+            truncate_display(f"{format_timestamp(item.pubdate)} ⋅ {item.bvid or item.aid}", width - 4),
         ]
         for meta_line in meta_lines:
             stdscr.addnstr(content_y, x + 2, meta_line, width - 4, self.attr("muted"))
@@ -1083,13 +1084,13 @@ class BilibiliTUI:
         )
         title_attr = self.attr("selected") if selected else self.attr("title")
         is_fav = self.history_store.is_favorite(item)
-        prefix = "★ " if is_fav else ""
+        prefix = "✦ " if is_fav else ""
         pointer = "❯ " if selected else ""
         title = f"{pointer}{prefix}{item.title}"
         stdscr.addnstr(y + 1, x + 2, truncate_display(title, width - 4), width - 4, title_attr)
         stdscr.addnstr(y + 2, x + 2, truncate_display(f"UP {item.author}", width - 4), width - 4, self.attr("info"))
         if height >= 5:
-            metrics = f"▶ {human_count(item.play)} · ◷ {item.duration}"
+            metrics = f"▸ {human_count(item.play)} ⋅ ◷ {item.duration}"
             stdscr.addnstr(y + 3, x + 2, truncate_display(metrics, width - 4), width - 4, self.attr("muted"))
 
     def draw_comments_panel(self, stdscr: Any, y: int, x: int, height: int, width: int) -> None:
@@ -1126,7 +1127,7 @@ class BilibiliTUI:
             if available <= 0:
                 break
             header = truncate_display(
-                f"❝ {comment.author} · ♡ {human_count(comment.like)} · {format_timestamp(comment.ctime)}",
+                f"❝ {comment.author} ⋅ ❤ {human_count(comment.like)} ⋅ {format_timestamp(comment.ctime)}",
                 width - 4,
             )
             stdscr.addnstr(cursor, x + 2, header, width - 4, self.attr("info"))
@@ -1163,12 +1164,12 @@ class BilibiliTUI:
             stdscr.addnstr(start_y, start_x, "当前没有选中的视频", width, self.attr("muted"))
             return
 
-        title = f"★ {item.title}" if self.history_store.is_favorite(item) else item.title
+        title = f"✦ {item.title}" if self.history_store.is_favorite(item) else item.title
         summary_lines = [
             title,
             f"UP {item.author}",
-            f"▶ {human_count(item.play)} 播放 · ≣ {human_count(item.danmaku)} 弹幕 · ◷ {item.duration}",
-            f"发布于 {format_timestamp(item.pubdate)} · {item.bvid or item.aid}",
+            f"▸ {human_count(item.play)} 播放 ⋅ ≣ {human_count(item.danmaku)} 弹幕 ⋅ ◷ {item.duration}",
+            f"发布于 {format_timestamp(item.pubdate)} ⋅ {item.bvid or item.aid}",
             "",
             "🔗 链接",
             truncate_display(item.url, width=width),
@@ -1189,7 +1190,7 @@ class BilibiliTUI:
             stdscr.addnstr(start_y + offset, start_x, line, width, attr)
 
     def draw_favorites_list(self, stdscr: Any, y: int, x: int, height: int, width: int) -> None:
-        label = f"收藏列表 · {len(self.items)}"
+        label = f"收藏列表 ⋅ {len(self.items)}"
         self.draw_box(stdscr, y, x, height, width, label)
         if height < 4:
             return
@@ -1206,17 +1207,17 @@ class BilibiliTUI:
                 break
             selected = index == self.selected_index
             prefix = "❯ " if selected else "  "
-            title = f"{prefix}★ {item.title}"
+            title = f"{prefix}✦ {item.title}"
             title_attr = self.attr("selected") if selected else self.attr("title")
             stdscr.addnstr(cursor, x + 2, truncate_display(title, width - 4), width - 4, title_attr)
             cursor += 1
 
-            meta = f"  {item.author} · ▶ {human_count(item.play)} · ◷ {item.duration}"
+            meta = f"  {item.author} ⋅ ▸ {human_count(item.play)} ⋅ ◷ {item.duration}"
             stdscr.addnstr(cursor, x + 2, truncate_display(meta, width - 4), width - 4, self.attr("info") if selected else self.attr("muted"))
             cursor += 1
 
             if remaining >= 4:
-                ref_line = f"  {item.bvid or item.aid} · {format_timestamp(item.pubdate)}"
+                ref_line = f"  {item.bvid or item.aid} ⋅ {format_timestamp(item.pubdate)}"
                 stdscr.addnstr(cursor, x + 2, truncate_display(ref_line, width - 4), width - 4, self.attr("muted"))
                 cursor += 1
 
@@ -1237,7 +1238,7 @@ class BilibiliTUI:
             subtitle_attr = self.attr("muted")
         else:
             subtitle = truncate_display(
-                f"当前选中 · {selected.author} · ▶ {human_count(selected.play)} · a 播放/暂停 · x 停止 · o 浏览器打开",
+                f"当前选中 ⋅ {selected.author} ⋅ ▸ {human_count(selected.play)} ⋅ a 播放/暂停 ⋅ x 停止 ⋅ o 浏览器打开",
                 max(20, width - 2),
             )
             subtitle_attr = self.attr("muted")
@@ -1300,17 +1301,17 @@ class BilibiliTUI:
             hint = f"当前搜索：{truncate_display(self.keyword, max(10, width // 4))}"
             hint_attr = self.attr("muted")
         elif self.mode == "favorites":
-            hint = "a 播放/暂停 · x 停止 · o 打开"
+            hint = "a 播放/暂停 ⋅ x 停止 ⋅ o 打开"
             hint_attr = self.attr("muted")
         else:
-            hint = "Tab 切换分区 · / 搜索 · ? 帮助"
+            hint = "Tab 切换分区 ⋅ / 搜索 ⋅ ? 帮助"
             hint_attr = self.attr("muted")
         hint_x = max(0, width - display_width(hint) - 1)
         if hint_x > tab_x:
             stdscr.addnstr(y, hint_x, hint, width - hint_x - 1, hint_attr)
 
     def draw_split_view(self, stdscr: Any, height: int, width: int) -> None:
-        self._draw_top_bar(stdscr, width, "哔哩哔哩终端", f"{self.mode_token()} · 第 {self.page} 页")
+        self._draw_top_bar(stdscr, width, "哔哩哔哩终端", f"{self.mode_token()} ⋅ 第 {self.page} 页")
         self._draw_tab_row(stdscr, 1, width)
         stdscr.addnstr(2, 0, "─" * max(1, width - 1), width - 1, self.attr("border"))
 
@@ -1369,7 +1370,7 @@ class BilibiliTUI:
         item = self.current_detail_item()
         title = item.title if item else "没有结果"
         if item and self.history_store.is_favorite(item):
-            title = f"★ {title}"
+            title = f"✦ {title}"
         content_top = 2
         content_height = max(5, height - 5)
         self.draw_box(stdscr, content_top, 0, content_height, width, "视频详情")
@@ -1381,7 +1382,7 @@ class BilibiliTUI:
         for offset, line in enumerate(visible_lines):
             if "💬 热评:" in line or "📝 简介:" in line:
                 attr = self.attr("section")
-            elif line.startswith(("👤", "🔗", "🕒", "📅", "▶", "≡", "👍", "⭐", "🌐")):
+            elif line.startswith(("👤", "🔗", "🕒", "📅", "▸", "≋", "👍", "⭐", "🌐")):
                 attr = self.attr("info")
             elif line.startswith(tuple(f"{n}. " for n in range(1, 10))) and "👍" in line:
                 attr = self.attr("info")

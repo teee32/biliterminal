@@ -53,6 +53,24 @@ class FormattingTests(unittest.TestCase):
         self.assertEqual(cli.display_width("abc"), 3)
         self.assertEqual(cli.display_width("中文A"), 5)
 
+    def test_box_drawing_chars_count_as_single_width(self) -> None:
+        # 框线字符在部分终端被标为歧义宽度，必须固定按单宽计算，
+        # 否则框线与内容会错位（Ghostty 等终端会把歧义字符按双宽渲染）
+        for char in "─│╭╮╰╯┄":
+            self.assertEqual(cli.char_width(char), 1, f"{char!r} 应按单宽计算")
+
+    def test_card_meta_symbols_are_unambiguous_width(self) -> None:
+        # 卡片/详情里与文字混排的符号必须是明确单宽（EAW≠A），
+        # 否则在把歧义字符当双宽的终端里会撑破右边框
+        import unicodedata
+
+        for char in "▸⋅✦◷❝❤≋≣⇕‹›":
+            self.assertNotEqual(
+                unicodedata.east_asian_width(char),
+                "A",
+                f"{char!r} 是歧义宽度，会在某些终端错位",
+            )
+
     def test_truncate_display_respects_terminal_cell_width(self) -> None:
         self.assertEqual(cli.truncate_display("原神启动测试", 8), "原神...")
 
@@ -1266,7 +1284,7 @@ class TUIStateTests(unittest.TestCase):
             fake = FakeScreen()
             tui.draw_featured_card(fake, 0, 0, 8, 40, item, selected=False)
             rendered = " ".join(fake.lines)
-            self.assertIn("★ 收藏卡片", rendered)
+            self.assertIn("✦ 收藏卡片", rendered)
 
     def test_draw_uses_favorites_view_in_favorites_mode(self) -> None:
         import curses

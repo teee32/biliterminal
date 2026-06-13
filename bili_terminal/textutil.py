@@ -61,6 +61,10 @@ def normalize_keyword(value: str) -> str:
 def char_width(char: str) -> int:
     if unicodedata.combining(char):
         return 0
+    # 框线字符（U+2500–U+257F）按单宽固定：部分终端把它们标记为歧义宽度，
+    # 但我们始终按 1 格绘制，固定下来可避免框线与内容错位
+    if "─" <= char <= "╿":
+        return 1
     return 2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1
 
 
