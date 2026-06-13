@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "biliterminal"
-version = "0.2.0"
+version = "0.3.2"
 description = "一个轻量、低打扰、适合在终端里摸鱼刷一眼的 Bilibili 客户端"
 readme = "README.md"
 requires-python = ">=3.10"

@@ -32,7 +32,7 @@ rm -f "${PAYLOAD_DIR}/generate_readme_screenshots.py"
 cp "${HELPER_SOURCE}" "${MACOS_DIR}/biliterminal_audio_helper.m"
 
 if command -v clang >/dev/null 2>&1; then
-    if clang -fobjc-arc -framework Foundation -framework AVFoundation "${HELPER_SOURCE}" -o "${HELPER_BINARY}"; then
+    if clang -fobjc-arc -framework Foundation -framework AVFoundation -framework CoreMedia "${HELPER_SOURCE}" -o "${HELPER_BINARY}"; then
         chmod +x "${HELPER_BINARY}"
     else
         echo "warning: failed to compile macOS audio helper, runtime will try to build it later" >&2

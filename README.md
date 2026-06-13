@@ -200,7 +200,8 @@ biliterminal tui
 - 仓库内直接运行时，搜索词和最近浏览视频会落到 `.omx/state/bilibili-cli-history.json`。
 - 双击版会把历史写到 `~/.biliterminal/state/bilibili-cli-history.json`，并把启动日志写到 `~/.biliterminal/launcher.log`。
 - 音频播放优先使用 `mpv`（通过 IPC 控制暂停），其次是 macOS 原生无窗体 audio helper（直接流式播放，原生暂停），再次是 `ffplay`，最后回退到下载后用 `afplay` 播放。暂停走播放器原生接口，不会出现卡顿重复音。
-- TUI 里 `a` 是当前视频的播放 / 暂停切换，`x` 会直接停止当前音频；顶栏会用 `♪ / ⏸` 实时显示正在播放的标题；CLI / REPL 里也支持 `audio pause`、`audio resume`、`audio stop`。
+- TUI 里 `a` 是当前视频的播放 / 暂停切换，`x` 会直接停止当前音频；顶栏会用 `▸ / ⏸` 实时显示正在播放的标题；CLI / REPL 里也支持 `audio pause`、`audio resume`、`audio stop`。
+- TUI 边框使用 curses ACS 备用字符集绘制，规避了部分终端（如 Ghostty 默认配置）把歧义宽度字符按双宽渲染导致的框线错位，在各类终端下都能正确对齐。
 - 这是一个偏“轻量摸鱼”场景的终端浏览器，不是下载器，也没有实现登录态、投稿、评论发送、弹幕发送等需要更高权限的功能。
 - 目前默认聚焦视频内容，不处理直播、课程、专栏、动态等其他内容类型。
 - 终端版已经接入首页推荐、热搜、默认搜索词、入站必刷与分区榜单，但因为 curses 终端没有图片、瀑布流和登录态组件，所以还不是官网像素级复刻。
