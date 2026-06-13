@@ -208,8 +208,10 @@ class BilibiliTUI:
         "gold": 215,
         "green": 114,
         "red": 203,
-        "border": 238,
-        "muted": 244,
+        # 边框/弱化文本都落在可见灰阶区间：部分终端主题会把 ~238 以下的
+        # 低位灰阶压到接近背景色，导致边框线完全看不见，故取 242/245
+        "border": 242,
+        "muted": 245,
     }
 
     def init_theme(self) -> None:
