@@ -8,6 +8,7 @@ from unittest import mock
 
 from bili_terminal import audio
 from bili_terminal import bilibili_cli as cli
+from bili_terminal import tui as tui_module
 from bili_terminal import video_player as vp
 
 
@@ -1332,6 +1333,41 @@ class TUIStateTests(unittest.TestCase):
             self.assertIn(("init_pair", 1, 13, -1), fake_curses.calls)
             self.assertIn(("init_pair", 4, 13, -1), fake_curses.calls)
             self.assertTrue(tui.use_colors)
+
+    def test_run_shortens_curses_escape_delay(self) -> None:
+        class FakeCurses:
+            KEY_RESIZE = 410
+            error = RuntimeError
+
+            def __init__(self) -> None:
+                self.escdelay: int | None = None
+
+            def set_escdelay(self, delay_ms: int) -> None:
+                self.escdelay = delay_ms
+
+            def curs_set(self, _visibility: int) -> None:
+                return None
+
+        class FakeScreen:
+            def keypad(self, _enabled: bool) -> None:
+                return None
+
+            def timeout(self, _delay: int) -> None:
+                return None
+
+            def getch(self) -> int:
+                return ord("q")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fake_curses = FakeCurses()
+            store = cli.HistoryStore(path=f"{temp_dir}/history.json")
+            tui = cli.BilibiliTUI(cli.BilibiliClient(), store)
+            tui.init_theme = mock.MagicMock()
+            tui.start_load_items = mock.MagicMock()
+            tui.draw = mock.MagicMock()
+            with mock.patch.dict(sys.modules, {"curses": fake_curses}):
+                tui.run(FakeScreen())
+            self.assertEqual(fake_curses.escdelay, tui_module.ESCDELAY_MS)
 
     def test_load_items_uses_home_recommend_channel(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

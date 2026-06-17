@@ -23,6 +23,7 @@ from .textutil import (
 
 BILIBILI_PINK_RGB = (984, 447, 600)
 TICK_MS = 100
+ESCDELAY_MS = 25
 STATUS_TTL_TICKS = 120
 COMMENT_DEBOUNCE_TICKS = 4
 SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
@@ -1934,6 +1935,10 @@ class BilibiliTUI:
         import curses
 
         self.init_theme()
+        try:
+            curses.set_escdelay(ESCDELAY_MS)
+        except (AttributeError, curses.error):
+            pass
         curses.curs_set(0)
         stdscr.keypad(True)
         stdscr.timeout(TICK_MS)
