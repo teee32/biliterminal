@@ -1547,6 +1547,23 @@ class TUIStateTests(unittest.TestCase):
             mock_stop.assert_called_once_with(silent=True)
 
     @mock.patch.object(audio, "stop_audio_playback")
+    def test_video_esc_returns_to_tui_and_requests_full_redraw(self, mock_stop: mock.MagicMock) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = cli.HistoryStore(path=f"{temp_dir}/history.json")
+            tui = cli.BilibiliTUI(cli.BilibiliClient(), store)
+            tui.video_mode = True
+            tui._video_started_audio = True
+            tui._video_player = mock.MagicMock()
+            stdout = io.StringIO()
+            with mock.patch("sys.stdout", new=stdout):
+                should_exit = tui.handle_video_key(27)
+            self.assertFalse(should_exit)
+            self.assertFalse(tui.video_mode)
+            self.assertTrue(tui._force_full_redraw)
+            self.assertIn("\x1b(B\x1b[2J\x1b[H", stdout.getvalue())
+            mock_stop.assert_called_once_with(silent=True)
+
+    @mock.patch.object(audio, "stop_audio_playback")
     def test_video_x_stops_and_returns_to_tui(self, mock_stop: mock.MagicMock) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             store = cli.HistoryStore(path=f"{temp_dir}/history.json")
@@ -1710,6 +1727,47 @@ class TUIStateTests(unittest.TestCase):
                 tui.draw(FakeScreen())
             tui.draw_favorites_view.assert_called_once()
             tui.draw_split_view.assert_not_called()
+
+    def test_draw_after_video_exit_forces_curses_full_repaint(self) -> None:
+        import curses
+
+        class FakeScreen:
+            def __init__(self) -> None:
+                self.calls: list[tuple[object, ...]] = []
+
+            def clearok(self, enabled: bool) -> None:
+                self.calls.append(("clearok", enabled))
+
+            def clear(self) -> None:
+                self.calls.append(("clear",))
+
+            def erase(self) -> None:
+                self.calls.append(("erase",))
+
+            def getmaxyx(self) -> tuple[int, int]:
+                return (32, 120)
+
+            def addnstr(self, *_args, **_kwargs) -> None:
+                return None
+
+            def hline(self, *_args, **_kwargs) -> None:
+                return None
+
+            def refresh(self) -> None:
+                return None
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = cli.HistoryStore(path=f"{temp_dir}/history.json")
+            tui = cli.BilibiliTUI(cli.BilibiliClient(), store)
+            tui.draw_split_view = mock.MagicMock()
+            tui._force_full_redraw = True
+            fake = FakeScreen()
+            with mock.patch.object(curses, "ACS_HLINE", "-", create=True):
+                tui.draw(fake)
+            self.assertIn(("clearok", True), fake.calls)
+            self.assertIn(("clear",), fake.calls)
+            self.assertNotIn(("erase",), fake.calls)
+            self.assertFalse(tui._force_full_redraw)
 
     def test_draw_favorites_list_renders_empty_hint(self) -> None:
         import curses

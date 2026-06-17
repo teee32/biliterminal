@@ -88,6 +88,7 @@ class BilibiliTUI:
         self._video_detail_item: VideoItem | None = None  # 进入视频模式时的视频
         self._video_state = "idle"
         self._video_started_audio = False
+        self._force_full_redraw = False
 
     # ---------- async plumbing ----------
 
@@ -1550,14 +1551,41 @@ class BilibiliTUI:
             out.write(f"\x1b[{y_off + i + 1};{x_off + 1}H{line}")
         out.flush()
 
+    def _prepare_screen_for_redraw(self, stdscr: Any) -> bool:
+        import curses
+
+        if not self._force_full_redraw:
+            stdscr.erase()
+            return False
+        self._force_full_redraw = False
+        try:
+            stdscr.clearok(True)
+        except (AttributeError, curses.error):
+            pass
+        try:
+            stdscr.clear()
+        except (AttributeError, curses.error):
+            stdscr.erase()
+        return True
+
+    def _finish_forced_redraw(self, stdscr: Any) -> None:
+        import curses
+
+        try:
+            stdscr.clearok(False)
+        except (AttributeError, curses.error):
+            pass
+
     def draw(self, stdscr: Any) -> None:
         import curses
 
         height, width = stdscr.getmaxyx()
         if height < 12 or width < 70:
-            stdscr.erase()
+            forced_redraw = self._prepare_screen_for_redraw(stdscr)
             stdscr.addnstr(0, 0, "终端太小，至少需要 70x12。", max(1, width - 1))
             stdscr.refresh()
+            if forced_redraw:
+                self._finish_forced_redraw(stdscr)
             return
 
         if self.video_mode:
@@ -1568,7 +1596,7 @@ class BilibiliTUI:
                 pass
             return
 
-        stdscr.erase()
+        forced_redraw = self._prepare_screen_for_redraw(stdscr)
         try:
             if self.detail_mode:
                 self.draw_detail_view(stdscr, height, width)
@@ -1607,6 +1635,8 @@ class BilibiliTUI:
         except curses.error:
             pass
         stdscr.refresh()
+        if forced_redraw:
+            self._finish_forced_redraw(stdscr)
 
     # ---------- main loop ----------
 
@@ -1841,8 +1871,9 @@ class BilibiliTUI:
         self._video_detail_item = None
         # 清屏以便 TUI 重绘
         import sys
-        sys.stdout.write("\x1b[2J")
+        sys.stdout.write("\x1b[0m\x1b(B\x1b[2J\x1b[H")
         sys.stdout.flush()
+        self._force_full_redraw = True
         self.set_status(message, sticky=state in {"failed"})
         self._dirty = True
 
