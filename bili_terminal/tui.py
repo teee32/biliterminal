@@ -1423,7 +1423,7 @@ class BilibiliTUI:
             hint = f"当前搜索：{truncate_display(self.keyword, max(10, width // 4))}"
             hint_attr = self.attr("muted")
         elif self.mode == "favorites":
-            hint = "a 播放/暂停 ⋅ x 停止 ⋅ o 打开"
+            hint = "y 同步 ⋅ a 播放/暂停 ⋅ x 停止 ⋅ o 打开"
             hint_attr = self.attr("muted")
         else:
             hint = "Tab 切换分区 ⋅ / 搜索 ⋅ ? 帮助"
@@ -1610,7 +1610,7 @@ class BilibiliTUI:
             if self.detail_mode:
                 shortcuts = "j/k 滚动  V 视频  a 播放/暂停  x 停止  f 收藏  o 浏览器打开  r/c 刷新评论  b 返回  q 退出"
             elif self.mode == "favorites":
-                shortcuts = "j/k 移动  Enter 详情  V 视频  a 播放/暂停  x 停止  f 取消收藏  o 浏览器打开  c 评论  b 返回  q 退出"
+                shortcuts = "j/k 移动  Enter 详情  y 同步  V 视频  a 播放/暂停  x 停止  f 取消收藏  o 浏览器打开  c 评论  b 返回  q 退出"
             else:
                 shortcuts = "Tab 分区  1-9 直选  / 搜索  V 视频  a 播放/暂停  x 停止  f 收藏  m 收藏夹  c 评论  Enter 详情  q 退出"
             stdscr.addnstr(height - 2, 2, shortcuts, width - 4, self.attr("muted"))

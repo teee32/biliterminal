@@ -1764,6 +1764,56 @@ class TUIStateTests(unittest.TestCase):
             tui.draw_favorites_view.assert_called_once()
             tui.draw_split_view.assert_not_called()
 
+    def test_draw_favorites_mode_renders_sync_shortcut_hint(self) -> None:
+        import curses
+
+        class FakeScreen:
+            def __init__(self) -> None:
+                self.lines: list[str] = []
+
+            def erase(self) -> None:
+                return None
+
+            def getmaxyx(self) -> tuple[int, int]:
+                return (32, 160)
+
+            def addnstr(self, _y: int, _x: int, text: str, *_args) -> None:
+                self.lines.append(text)
+
+            def hline(self, *_args, **_kwargs) -> None:
+                return None
+
+            def refresh(self) -> None:
+                return None
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = cli.HistoryStore(path=f"{temp_dir}/history.json")
+            tui = cli.BilibiliTUI(cli.BilibiliClient(), store)
+            tui.mode = "favorites"
+            tui.draw_favorites_view = mock.MagicMock()
+            with mock.patch.object(curses, "ACS_HLINE", "-", create=True):
+                fake = FakeScreen()
+                tui.draw(fake)
+            rendered = " ".join(fake.lines)
+            self.assertIn("y 同步", rendered)
+
+    def test_draw_tab_row_favorites_mode_renders_sync_hint(self) -> None:
+        class FakeScreen:
+            def __init__(self) -> None:
+                self.lines: list[str] = []
+
+            def addnstr(self, _y: int, _x: int, text: str, *_args) -> None:
+                self.lines.append(text)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = cli.HistoryStore(path=f"{temp_dir}/history.json")
+            tui = cli.BilibiliTUI(cli.BilibiliClient(), store)
+            tui.mode = "favorites"
+            fake = FakeScreen()
+            tui._draw_tab_row(fake, 0, 120)
+            rendered = " ".join(fake.lines)
+            self.assertIn("y 同步", rendered)
+
     def test_draw_after_video_exit_forces_curses_full_repaint(self) -> None:
         import curses
 
