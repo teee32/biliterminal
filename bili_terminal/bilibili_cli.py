@@ -69,8 +69,10 @@ from .client import (
     DEFAULT_TIMEOUT,
     DEFAULT_USER_AGENT,
     BilibiliClient,
+    canonical_video_referer,
     decode_response_body,
     extract_audio_stream,
+    extract_video_stream,
     mixin_wbi_key,
     sign_wbi_params,
 )
@@ -84,6 +86,8 @@ from .models import (
     CommentItem,
     ListState,
     VideoItem,
+    VideoPlaybackState,
+    VideoStream,
     build_video_url,
     build_watch_url,
     comments_from_payload,
@@ -123,6 +127,15 @@ from .textutil import (
     wrap_display,
 )
 from .tui import BILIBILI_PINK_RGB, HOME_CHANNELS, BilibiliTUI, run_tui
+from .video_player import (
+    FrameReader,
+    VideoPlayer,
+    calc_video_dimensions,
+    has_ffmpeg,
+    play_video_for_item,
+    render_frame,
+    video_stream_for_item,
+)
 
 __all__ = [name for name in dir() if not name.startswith("_")]
 

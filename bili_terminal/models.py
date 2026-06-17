@@ -71,6 +71,31 @@ class AudioPlaybackState:
     ipc_socket: str | None = None
 
 
+@dataclass(slots=True)
+class VideoStream:
+    url: str
+    referer: str
+    user_agent: str
+    width: int
+    height: int
+    frame_rate: str
+    codec: str
+    bandwidth: int
+    source_kind: str  # "dash-video" | "durl"
+    cookie_header: str = ""
+
+
+@dataclass(slots=True)
+class VideoPlaybackState:
+    pid: int | None
+    title: str
+    video_key: str | None
+    playing: bool = True
+    target_cols: int = 80
+    target_rows: int = 24
+    target_fps: int = 10
+
+
 def parse_video_ref(value: str) -> tuple[str, str]:
     value = value.strip()
     bvid_match = BVID_PATTERN.search(value)

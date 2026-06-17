@@ -8,6 +8,7 @@ from unittest import mock
 
 from bili_terminal import audio
 from bili_terminal import bilibili_cli as cli
+from bili_terminal import video_player as vp
 
 
 class ParseVideoRefTests(unittest.TestCase):
@@ -608,6 +609,72 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(stream.url, "https://example.com/audio.m4s")
         self.assertEqual(stream.referer, item.url)
 
+    def test_extract_video_stream_prefers_avc_backup_url(self) -> None:
+        stream = cli.extract_video_stream(
+            {
+                "data": {
+                    "dash": {
+                        "video": [
+                            {
+                                "bandwidth": 200000,
+                                "baseUrl": "https://example.com/av1.m4s",
+                                "codecs": "av01.0.08M.08",
+                                "width": 1920,
+                                "height": 1080,
+                            },
+                            {
+                                "bandwidth": 100000,
+                                "backupUrl": ["https://example.com/avc-backup.m4s"],
+                                "codecs": "avc1.640028",
+                                "width": 1280,
+                                "height": 720,
+                            },
+                        ]
+                    }
+                }
+            },
+            referer="https://www.bilibili.com/video/BV1xx411c7mu",
+            user_agent="UA",
+            cookie_header="SESSDATA=abc",
+        )
+        self.assertEqual(stream.url, "https://example.com/avc-backup.m4s")
+        self.assertEqual(stream.codec, "avc1.640028")
+        self.assertEqual(stream.cookie_header, "SESSDATA=abc")
+
+    def test_video_stream_for_item_uses_canonical_referer_and_cookie(self) -> None:
+        client = cli.BilibiliClient()
+        client._set_cookie_string("SESSDATA=abc")
+        client._request_text = mock.MagicMock(
+            return_value=(
+                '<script>window.__playinfo__={"data":{"dash":{"video":[{'
+                '"bandwidth":96000,"baseUrl":"https://example.com/video.m4s",'
+                '"codecs":"avc1.640028","width":640,"height":360'
+                '}]}}}</script>'
+            )
+        )
+        item = cli.VideoItem(
+            title="收藏视频",
+            author="UP",
+            bvid="BV1xx411c7mu",
+            aid=106,
+            duration="1:00",
+            play=1,
+            danmaku=2,
+            like=3,
+            favorite=4,
+            pubdate=1710000000,
+            description="简介",
+            url="bilibili://video/BV1xx411c7mu",
+            raw={},
+        )
+        stream = client.video_stream_for_item(item)
+        self.assertEqual(stream.referer, "https://www.bilibili.com/video/BV1xx411c7mu")
+        self.assertIn("SESSDATA=abc", stream.cookie_header)
+        client._request_text.assert_called_once_with(
+            "https://www.bilibili.com/video/BV1xx411c7mu",
+            "https://www.bilibili.com/",
+        )
+
     @mock.patch.object(audio, "clear_audio_playback_state")
     @mock.patch.object(audio, "pid_exists", side_effect=[True, False])
     @mock.patch.object(audio, "wait_for_audio_exit")
@@ -869,6 +936,64 @@ class ClientTests(unittest.TestCase):
         mock_signal.assert_called_once_with(8765, cli.signal.SIGSTOP)
         self.assertTrue(state.paused)
         mock_save.assert_called_once_with(state)
+
+
+class VideoPlayerTests(unittest.TestCase):
+    def make_stream(self, cookie_header: str = "") -> cli.VideoStream:
+        return cli.VideoStream(
+            url="https://example.com/video.m4s",
+            referer="https://www.bilibili.com/video/BV1xx411c7mu",
+            user_agent="UA",
+            width=640,
+            height=360,
+            frame_rate="30",
+            codec="avc1",
+            bandwidth=100000,
+            source_kind="dash-video",
+            cookie_header=cookie_header,
+        )
+
+    def test_ffmpeg_command_includes_headers_but_log_redacts_cookie(self) -> None:
+        command = vp._build_ffmpeg_command(self.make_stream("SESSDATA=secret"), 40, 12, fps=8)
+        self.assertIn("Cookie: SESSDATA=secret", command[command.index("-headers") + 1])
+        redacted = " ".join(vp._redact_ffmpeg_command(command))
+        self.assertIn("Cookie: <redacted>", redacted)
+        self.assertNotIn("secret", redacted)
+
+    def test_stop_wakes_paused_process_and_closes_stderr(self) -> None:
+        class FakeProcess:
+            def __init__(self) -> None:
+                self.signals: list[int] = []
+                self.returncode = None
+
+            def poll(self) -> int | None:
+                return None
+
+            def send_signal(self, sig: int) -> None:
+                self.signals.append(sig)
+
+            def wait(self, timeout: float | None = None) -> int:
+                self.returncode = -15
+                return self.returncode
+
+            def kill(self) -> None:
+                self.signals.append(cli.signal.SIGKILL)
+
+        process = FakeProcess()
+        player = vp.VideoPlayer(self.make_stream(), 40, 12, fps=8)
+        player._process = process
+        player._paused = True
+        stderr_handle = mock.MagicMock()
+        player._stderr_handle = stderr_handle
+        player.stop()
+        self.assertEqual(process.signals[:2], [cli.signal.SIGCONT, cli.signal.SIGTERM])
+        stderr_handle.close.assert_called_once()
+        self.assertIsNone(player._stderr_handle)
+
+    def test_render_frame_rejects_short_frame(self) -> None:
+        with self.assertRaises(ValueError):
+            vp.render_frame(b"\xff\xff", 1, 1)
+        self.assertEqual(vp.render_frame(b"", 0, 1), "")
 
 
 class ShellTests(unittest.TestCase):
@@ -1360,6 +1485,150 @@ class TUIStateTests(unittest.TestCase):
             tui.stop_audio()
             mock_stop_audio.assert_called_once()
             self.assertEqual(tui.status, "已停止音频: 标题")
+
+    def test_video_stream_failure_returns_to_tui_and_preserves_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = cli.HistoryStore(path=f"{temp_dir}/history.json")
+            tui = cli.BilibiliTUI(cli.BilibiliClient(), store)
+            tui.items = [self.make_item()]
+            tui._submit = lambda work, apply, status=None: apply(work())
+            tui.client.video_stream_for_item = mock.MagicMock(side_effect=cli.BilibiliAPIError("boom"))
+            with mock.patch.object(vp, "has_ffmpeg", return_value=True), mock.patch("sys.stdout", new=io.StringIO()):
+                tui.enter_video_mode()
+            self.assertFalse(tui.video_mode)
+            self.assertEqual(tui._video_state, "failed")
+            self.assertIn("boom", tui.status)
+
+    @mock.patch.object(audio, "play_audio_for_item", side_effect=cli.BilibiliAPIError("audio fail"))
+    def test_video_audio_start_failure_does_not_crash_or_exit_video(self, _mock_audio: mock.MagicMock) -> None:
+        class FakePlayer:
+            def start(self) -> None:
+                return None
+
+            def stop(self) -> None:
+                return None
+
+        stream = cli.VideoStream(
+            url="https://example.com/video.m4s",
+            referer="https://www.bilibili.com/video/BV1xx411c7mu",
+            user_agent="UA",
+            width=640,
+            height=360,
+            frame_rate="30",
+            codec="avc1",
+            bandwidth=100000,
+            source_kind="dash-video",
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = cli.HistoryStore(path=f"{temp_dir}/history.json")
+            tui = cli.BilibiliTUI(cli.BilibiliClient(), store)
+            tui.items = [self.make_item()]
+            tui._submit = lambda work, apply, status=None: apply(work())
+            tui.client.video_stream_for_item = mock.MagicMock(return_value=stream)
+            with mock.patch.object(vp, "has_ffmpeg", return_value=True), mock.patch.object(vp, "VideoPlayer", return_value=FakePlayer()):
+                tui.enter_video_mode()
+            self.assertTrue(tui.video_mode)
+            self.assertEqual(tui._video_state, "playing")
+            self.assertFalse(tui._video_started_audio)
+            self.assertIn("音频启动失败", tui.status)
+
+    @mock.patch.object(audio, "stop_audio_playback")
+    def test_video_q_returns_to_tui_without_exiting_app(self, mock_stop: mock.MagicMock) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = cli.HistoryStore(path=f"{temp_dir}/history.json")
+            tui = cli.BilibiliTUI(cli.BilibiliClient(), store)
+            tui.video_mode = True
+            tui._video_started_audio = True
+            tui._video_player = mock.MagicMock()
+            with mock.patch("sys.stdout", new=io.StringIO()):
+                should_exit = tui.handle_video_key(ord("q"))
+            self.assertFalse(should_exit)
+            self.assertFalse(tui.video_mode)
+            mock_stop.assert_called_once_with(silent=True)
+
+    @mock.patch.object(audio, "stop_audio_playback")
+    def test_video_x_stops_and_returns_to_tui(self, mock_stop: mock.MagicMock) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = cli.HistoryStore(path=f"{temp_dir}/history.json")
+            tui = cli.BilibiliTUI(cli.BilibiliClient(), store)
+            tui.video_mode = True
+            tui._video_started_audio = True
+            tui._video_player = mock.MagicMock()
+            with mock.patch("sys.stdout", new=io.StringIO()):
+                tui.handle_video_key(ord("x"))
+            self.assertFalse(tui.video_mode)
+            self.assertEqual(tui.status, "已停止播放")
+            mock_stop.assert_called_once_with(silent=True)
+
+    @mock.patch.object(audio, "pause_audio_playback", return_value="已暂停音频: 标题")
+    def test_video_space_pauses_video_and_audio(self, mock_pause: mock.MagicMock) -> None:
+        player = mock.MagicMock()
+        player.toggle_pause.return_value = False
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = cli.HistoryStore(path=f"{temp_dir}/history.json")
+            tui = cli.BilibiliTUI(cli.BilibiliClient(), store)
+            tui.video_mode = True
+            tui._video_started_audio = True
+            tui._video_player = player
+            tui.handle_video_key(ord(" "))
+            mock_pause.assert_called_once()
+            self.assertEqual(tui._video_state, "paused")
+            self.assertEqual(tui.status, "已暂停")
+
+    @mock.patch.object(audio, "stop_audio_playback")
+    def test_video_natural_end_cleans_up_once(self, mock_stop: mock.MagicMock) -> None:
+        class FakePlayer:
+            def __init__(self) -> None:
+                self.stop_count = 0
+
+            def get_frame(self) -> str:
+                return "@"
+
+            def is_alive(self) -> bool:
+                return False
+
+            def stop(self) -> None:
+                self.stop_count += 1
+
+        player = FakePlayer()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = cli.HistoryStore(path=f"{temp_dir}/history.json")
+            tui = cli.BilibiliTUI(cli.BilibiliClient(), store)
+            tui.video_mode = True
+            tui._video_state = "playing"
+            tui._video_started_audio = True
+            tui._video_player = player
+            with mock.patch("sys.stdout", new=io.StringIO()):
+                tui._tick()
+                tui._tick()
+            self.assertFalse(tui.video_mode)
+            self.assertEqual(player.stop_count, 1)
+            mock_stop.assert_called_once_with(silent=True)
+
+    @mock.patch.object(audio, "stop_audio_playback")
+    def test_video_process_exit_before_first_frame_returns_to_tui(self, mock_stop: mock.MagicMock) -> None:
+        class FakePlayer:
+            def get_frame(self) -> None:
+                return None
+
+            def is_alive(self) -> bool:
+                return False
+
+            def stop(self) -> None:
+                return None
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = cli.HistoryStore(path=f"{temp_dir}/history.json")
+            tui = cli.BilibiliTUI(cli.BilibiliClient(), store)
+            tui.video_mode = True
+            tui._video_state = "playing"
+            tui._video_started_audio = True
+            tui._video_player = FakePlayer()
+            with mock.patch("sys.stdout", new=io.StringIO()):
+                tui._tick()
+            self.assertFalse(tui.video_mode)
+            self.assertIn("视频播放失败", tui.status)
+            mock_stop.assert_called_once_with(silent=True)
 
     def test_mode_token_uses_favorites_label(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

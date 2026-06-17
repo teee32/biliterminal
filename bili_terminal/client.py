@@ -129,6 +129,98 @@ def extract_audio_stream(
     raise BilibiliAPIError("当前视频没有可用音频流")
 
 
+def extract_video_stream(
+    playinfo: dict[str, Any],
+    *,
+    referer: str,
+    user_agent: str,
+    title: str = "",
+    cookie_header: str = "",
+) -> "VideoStream":
+    from .models import VideoStream
+
+    def stream_url_from(entry: dict[str, Any]) -> str | None:
+        stream_url = entry.get("baseUrl") or entry.get("base_url")
+        if stream_url:
+            return str(stream_url)
+        backup_urls = entry.get("backupUrl") or entry.get("backup_url") or []
+        if isinstance(backup_urls, str) and backup_urls:
+            return backup_urls
+        if isinstance(backup_urls, list):
+            for backup_url in backup_urls:
+                if backup_url:
+                    return str(backup_url)
+        return None
+
+    data = playinfo.get("data") or {}
+    dash = data.get("dash") or {}
+    video_candidates: list[dict[str, Any]] = []
+    for entry in dash.get("video") or []:
+        if isinstance(entry, dict):
+            video_candidates.append(entry)
+
+    if video_candidates:
+        # 优先使用兼容性最好、解码最稳定的 H.264 (avc1) 编码，避免 HEVC 或 AV1 导致的解码色块/兼容性问题
+        avc_candidates = [
+            e for e in video_candidates
+            if "avc" in str(e.get("codecs") or e.get("codec") or "").lower()
+        ]
+        target_candidates = avc_candidates if avc_candidates else video_candidates
+
+        # 选择中等分辨率：ASCII 渲染极轻，吃得起更高码率
+        # 按带宽排序取中位，兼顾画质和解码开销
+        sorted_candidates = sorted(
+            target_candidates,
+            key=lambda e: int(e.get("bandwidth") or e.get("id") or 0),
+        )
+        # 取中位带宽（之前用 //3 偏保守，ASCII 模式用 //2 提升画质）
+        mid_index = max(0, len(sorted_candidates) // 2)
+        selected = sorted_candidates[mid_index]
+        stream_url = stream_url_from(selected)
+        if stream_url:
+            return VideoStream(
+                url=stream_url,
+                referer=referer,
+                user_agent=user_agent,
+                width=int(selected.get("width") or 0),
+                height=int(selected.get("height") or 0),
+                frame_rate=str(selected.get("frameRate") or selected.get("frame_rate") or "30"),
+                codec=str(selected.get("codecs") or selected.get("codec") or ""),
+                bandwidth=int(selected.get("bandwidth") or 0),
+                source_kind="dash-video",
+                cookie_header=cookie_header,
+            )
+
+    # 降级：durl 含视频+音频，ffmpeg 可以直接处理
+    for entry in data.get("durl") or []:
+        if not isinstance(entry, dict):
+            continue
+        stream_url = entry.get("url")
+        if stream_url:
+            return VideoStream(
+                url=str(stream_url),
+                referer=referer,
+                user_agent=user_agent,
+                width=0,
+                height=0,
+                frame_rate="30",
+                codec="",
+                bandwidth=0,
+                source_kind="durl",
+                cookie_header=cookie_header,
+            )
+
+    raise BilibiliAPIError("当前视频没有可用视频流")
+
+
+def canonical_video_referer(item: VideoItem) -> str:
+    if item.bvid:
+        return build_watch_url("bvid", item.bvid)
+    if item.aid:
+        return build_watch_url("aid", str(item.aid))
+    return item.url or "https://www.bilibili.com/"
+
+
 class BilibiliClient:
     def __init__(self, timeout: int = DEFAULT_TIMEOUT, user_agent: str = DEFAULT_USER_AGENT) -> None:
         self.timeout = timeout
@@ -502,7 +594,7 @@ class BilibiliClient:
             detail_item = self.video(str(detail_item.aid))
         if not detail_item.bvid:
             raise BilibiliAPIError("当前视频缺少 BV 号，无法解析音频流")
-        referer = detail_item.url or build_watch_url("bvid", detail_item.bvid)
+        referer = canonical_video_referer(detail_item)
         playinfo = self._video_playinfo(referer)
         cookie_header = self._build_cookie_header()
         return extract_audio_stream(
@@ -515,6 +607,30 @@ class BilibiliClient:
 
     def audio_stream(self, ref: str) -> AudioStream:
         return self.audio_stream_for_item(self.video(ref))
+
+    def video_stream_for_item(self, item: VideoItem) -> "VideoStream":
+        from .models import VideoStream
+
+        detail_item = item
+        if not detail_item.bvid:
+            if detail_item.aid is None:
+                raise BilibiliAPIError("当前视频缺少 BV 号，无法解析视频流")
+            detail_item = self.video(str(detail_item.aid))
+        if not detail_item.bvid:
+            raise BilibiliAPIError("当前视频缺少 BV 号，无法解析视频流")
+        referer = canonical_video_referer(detail_item)
+        playinfo = self._video_playinfo(referer)
+        cookie_header = self._build_cookie_header()
+        return extract_video_stream(
+            playinfo,
+            referer=referer,
+            user_agent=self.user_agent,
+            title=detail_item.title,
+            cookie_header=cookie_header,
+        )
+
+    def video_stream(self, ref: str) -> "VideoStream":
+        return self.video_stream_for_item(self.video(ref))
 
     def search_default(self) -> str:
         data = self._request_json(
