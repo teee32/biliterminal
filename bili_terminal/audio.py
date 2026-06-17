@@ -42,6 +42,8 @@ def build_mpv_command(stream: AudioStream, ipc_socket: str | None = None) -> lis
         f"--referrer={stream.referer}",
         f"--user-agent={stream.user_agent}",
     ]
+    if getattr(stream, "cookie_header", ""):
+        command.append(f"--http-header-fields=Cookie: {stream.cookie_header}")
     if ipc_socket:
         command.append(f"--input-ipc-server={ipc_socket}")
     command.append(stream.url)
@@ -51,6 +53,9 @@ def build_mpv_command(stream: AudioStream, ipc_socket: str | None = None) -> lis
 def build_ffplay_command(stream: AudioStream) -> list[str] | None:
     if not shutil.which("ffplay"):
         return None
+    headers = f"Referer: {stream.referer}\r\nUser-Agent: {stream.user_agent}\r\n"
+    if getattr(stream, "cookie_header", ""):
+        headers += f"Cookie: {stream.cookie_header}\r\n"
     return [
         "ffplay",
         "-nodisp",
@@ -58,7 +63,7 @@ def build_ffplay_command(stream: AudioStream) -> list[str] | None:
         "-loglevel",
         "warning",
         "-headers",
-        f"Referer: {stream.referer}\r\nUser-Agent: {stream.user_agent}\r\n",
+        headers,
         stream.url,
     ]
 
@@ -422,6 +427,8 @@ def spawn_audio_worker(stream: AudioStream, video_key: str | None) -> int:
         "--title",
         stream.title,
     ]
+    if getattr(stream, "cookie_header", ""):
+        command.extend(["--cookie", stream.cookie_header])
     if video_key:
         command.extend(["--video-key", video_key])
     env = dict(os.environ)
@@ -472,15 +479,18 @@ def prepare_audio_temp_path(url: str) -> str:
     return temp_path
 
 
-def download_audio_to_path(url: str, referer: str, user_agent: str, temp_path: str) -> None:
+def download_audio_to_path(url: str, referer: str, user_agent: str, temp_path: str, cookie_header: str = "") -> None:
     try:
+        headers = {
+            "User-Agent": user_agent,
+            "Accept": "*/*",
+            "Referer": referer,
+        }
+        if cookie_header:
+            headers["Cookie"] = cookie_header
         request = urllib.request.Request(
             url,
-            headers={
-                "User-Agent": user_agent,
-                "Accept": "*/*",
-                "Referer": referer,
-            },
+            headers=headers,
         )
         with urllib.request.urlopen(request, timeout=60) as response, open(temp_path, "wb") as handle:
             while True:
@@ -588,7 +598,7 @@ def _run_macos_download_worker(stream: AudioStream, resolved_key: str | None, he
                 media_path=temp_path,
             )
         )
-        download_audio_to_path(stream.url, stream.referer, stream.user_agent, temp_path)
+        download_audio_to_path(stream.url, stream.referer, stream.user_agent, temp_path, cookie_header=stream.cookie_header)
         process = _run_player_process([helper_path, temp_path])
         save_audio_playback_state(
             AudioPlaybackState(
@@ -637,7 +647,7 @@ def _run_afplay_worker(stream: AudioStream, resolved_key: str | None) -> int:
                 media_path=temp_path,
             )
         )
-        download_audio_to_path(stream.url, stream.referer, stream.user_agent, temp_path)
+        download_audio_to_path(stream.url, stream.referer, stream.user_agent, temp_path, cookie_header=stream.cookie_header)
         process = _run_player_process(["afplay", temp_path])
         save_audio_playback_state(
             AudioPlaybackState(
@@ -655,8 +665,8 @@ def _run_afplay_worker(stream: AudioStream, resolved_key: str | None) -> int:
         cleanup_audio_media_path(temp_path)
 
 
-def run_audio_worker(url: str, referer: str, user_agent: str, title: str, video_key: str | None = None) -> int:
-    stream = AudioStream(title=title or "当前音频", url=url, referer=referer, user_agent=user_agent, source_kind="worker")
+def run_audio_worker(url: str, referer: str, user_agent: str, title: str, video_key: str | None = None, cookie: str = "") -> int:
+    stream = AudioStream(title=title or "当前音频", url=url, referer=referer, user_agent=user_agent, source_kind="worker", cookie_header=cookie)
     resolved_key = _resolve_worker_video_key(video_key)
 
     # 后端优先级按暂停体验排序：

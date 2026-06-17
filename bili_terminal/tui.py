@@ -110,7 +110,10 @@ class BilibiliTUI:
             if exc is not None:
                 self.set_status(f"错误: {exc}", sticky=True)
                 continue
-            apply(result)
+            try:
+                apply(result)
+            except Exception as apply_exc:  # noqa: BLE001 — apply 在主循环中执行，不能让它炸穿 TUI
+                self.set_status(f"错误: {apply_exc}", sticky=True)
 
     def set_status(self, message: str, *, sticky: bool = False) -> None:
         self.status = message
@@ -678,6 +681,64 @@ class BilibiliTUI:
         self.set_status(audio.stop_audio_playback())
         self._refresh_audio_state()
 
+    # ── 服务端同步 ──
+
+    def _sync_current_mode_async(self) -> None:
+        """根据当前模式触发服务端同步。"""
+        if self.mode == "favorites":
+            self._sync_favorites_async()
+        elif self.mode == "history":
+            self._sync_history_async()
+        else:
+            self.set_status("当前模式不支持同步，请在收藏夹(m)或历史(v)视图中使用")
+
+    def _sync_favorites_async(self) -> None:
+        """异步从 Bilibili 服务端同步收藏夹。"""
+        import time
+
+        def work() -> int:
+            all_items: list[VideoItem] = []
+            folders = self.client.user_favorite_folders()
+            for folder in folders:
+                fid = folder["id"]
+                page = 1
+                while True:
+                    items, has_more = self.client.user_favorite_videos(fid, page=page, page_size=20)
+                    all_items.extend(items)
+                    if not has_more:
+                        break
+                    page += 1
+                    time.sleep(0.5)
+            return self.history_store.replace_favorites(all_items)
+
+        def apply(count: int) -> None:
+            self.set_status(f"收藏夹同步完成: {count} 个视频")
+            self.switch_mode("favorites")
+
+        self._submit(work, apply, "正在从 Bilibili 同步收藏夹...")
+
+    def _sync_history_async(self) -> None:
+        """异步从 Bilibili 服务端同步观看历史。"""
+        import time
+
+        def work() -> int:
+            all_items: list[VideoItem] = []
+            cursor: dict | None = {}
+            while cursor is not None:
+                max_oid = str(cursor.get("max", "")) if isinstance(cursor, dict) else ""
+                view_at = int(cursor.get("view_at", 0)) if isinstance(cursor, dict) else 0
+                items, cursor = self.client.user_history(max_oid=max_oid, view_at=view_at, page_size=20)
+                all_items.extend(items)
+                if cursor is not None:
+                    time.sleep(0.5)
+            return self.history_store.replace_history(all_items)
+
+        def apply(count: int) -> None:
+            self.set_status(f"历史记录同步完成: {count} 个视频")
+            self.switch_mode("history")
+
+        self._submit(work, apply, "正在从 Bilibili 同步观看历史...")
+
     def open_selected(self) -> None:
         item = self.selected_item
         if item is None:
@@ -834,6 +895,7 @@ class BilibiliTUI:
             "h              切回首页流",
             "v              查看历史",
             "m              查看收藏夹",
+            "y              在收藏夹/历史视图中同步 Bilibili 服务端数据",
             "n / p          下一页 / 上一页",
             "d              使用默认搜索词搜索",
             "r              刷新当前页",
@@ -1601,6 +1663,8 @@ class BilibiliTUI:
                 self.start_load_items()
             else:
                 self.set_status("已经是第一页")
+        elif key == ord("y"):
+            self._sync_current_mode_async()
         return False
 
     def run(self, stdscr: Any) -> None:

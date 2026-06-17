@@ -89,7 +89,7 @@ class HistoryStore:
                         continue
                     seen_keys.add(key)
                     normalized_favorites.append(item)
-                self._data["favorite_videos"] = normalized_favorites[: self.max_favorites]
+                self._data["favorite_videos"] = normalized_favorites
         self._rebuild_favorite_keys()
         self._invalidate_caches()
         if changed:
@@ -174,3 +174,45 @@ class HistoryStore:
         if limit is None:
             return list(self._favorite_videos_cache)
         return self._favorite_videos_cache[:limit]
+
+    # ── 服务端同步 ──
+
+    def replace_favorites(self, items: list[VideoItem]) -> int:
+        """用服务端收藏覆盖本地收藏夹。
+
+        清空现有数据后批量写入，去重，不设上限。
+        返回实际写入条数。
+        """
+        self._data["favorite_videos"] = []
+        self._favorite_keys.clear()
+        seen: set[str] = set()
+        for item in items:
+            payload = item_to_history_payload(item)
+            key = video_key_from_payload(payload)
+            if key is None or key in seen:
+                continue
+            seen.add(key)
+            self._data["favorite_videos"].append(payload)
+        self._rebuild_favorite_keys()
+        self._invalidate_caches()
+        self.save()
+        return len(self._data["favorite_videos"])
+
+    def replace_history(self, items: list[VideoItem]) -> int:
+        """用服务端历史覆盖本地浏览记录。
+
+        清空现有数据后批量写入，去重，不设上限。
+        返回实际写入条数。
+        """
+        self._data["recent_videos"] = []
+        seen: set[str] = set()
+        for item in items:
+            payload = item_to_history_payload(item)
+            key = video_key_from_payload(payload)
+            if key is None or key in seen:
+                continue
+            seen.add(key)
+            self._data["recent_videos"].append(payload)
+        self._invalidate_caches()
+        self.save()
+        return len(self._data["recent_videos"])

@@ -269,6 +269,67 @@ class FormattingTests(unittest.TestCase):
         mock_clear.assert_called_once()
 
 
+class ClientCredentialsTests(unittest.TestCase):
+    def test_set_cookie_string(self) -> None:
+        client = cli.BilibiliClient()
+        client.cookie_jar.clear()
+        client._set_cookie_string("SESSDATA=my_session_data; bili_jct=csrf_token; DedeUserID=123456")
+        cookies = {c.name: c.value for c in client.cookie_jar}
+        self.assertEqual(cookies.get("SESSDATA"), "my_session_data")
+        self.assertEqual(cookies.get("bili_jct"), "csrf_token")
+        self.assertEqual(cookies.get("DedeUserID"), "123456")
+
+    def test_load_credentials_from_env_cookie(self) -> None:
+        with mock.patch.dict(os.environ, {"BILITERMINAL_COOKIE": "SESSDATA=env_cookie_data"}):
+            client = cli.BilibiliClient()
+            cookies = {c.name: c.value for c in client.cookie_jar}
+            self.assertEqual(cookies.get("SESSDATA"), "env_cookie_data")
+
+    def test_load_credentials_from_env_sessdata(self) -> None:
+        with mock.patch.dict(os.environ, {"BILITERMINAL_SESSDATA": "env_sessdata_only"}):
+            client = cli.BilibiliClient()
+            cookies = {c.name: c.value for c in client.cookie_jar}
+            self.assertEqual(cookies.get("SESSDATA"), "env_sessdata_only")
+
+    def test_load_credentials_from_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with mock.patch.dict(os.environ, {"BILITERMINAL_STATE_DIR": temp_dir}):
+                cred_path = os.path.join(temp_dir, "credentials.json")
+                with open(cred_path, "w", encoding="utf-8") as f:
+                    json.dump({"cookie": "SESSDATA=file_cookie_data"}, f)
+                client = cli.BilibiliClient()
+                cookies = {c.name: c.value for c in client.cookie_jar}
+                self.assertEqual(cookies.get("SESSDATA"), "file_cookie_data")
+
+    def test_save_session(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with mock.patch.dict(os.environ, {"BILITERMINAL_STATE_DIR": temp_dir}):
+                client = cli.BilibiliClient()
+                client.cookie_jar.clear()
+                client._set_cookie_string("SESSDATA=save_test_sessdata; bili_jct=save_test_csrf")
+                client.save_session()
+
+                cred_path = os.path.join(temp_dir, "credentials.json")
+                self.assertTrue(os.path.exists(cred_path))
+                with open(cred_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                self.assertIn("SESSDATA=save_test_sessdata", data.get("cookie", ""))
+                self.assertEqual(data.get("SESSDATA"), "save_test_sessdata")
+
+    def test_user_id_falls_back_to_nav_with_sessdata_only(self) -> None:
+        client = cli.BilibiliClient()
+        client.cookie_jar.clear()
+        client._set_cookie_string("SESSDATA=env_sessdata_only")
+        client._request_json = mock.MagicMock(return_value={"isLogin": True, "mid": 123456})
+
+        self.assertEqual(client._get_user_id(), "123456")
+        client._request_json.assert_called_once_with(
+            "https://api.bilibili.com/x/web-interface/nav",
+            {},
+            "https://www.bilibili.com/",
+        )
+
+
 class ClientTests(unittest.TestCase):
     def make_response(self, payload: dict) -> mock.MagicMock:
         response = mock.MagicMock()
@@ -368,6 +429,38 @@ class ClientTests(unittest.TestCase):
             }
         )
         self.assertEqual(cli.BilibiliClient().trending_keywords(2), ["原神", "中文"])
+
+    @mock.patch.object(cli.BilibiliClient, "_open")
+    def test_user_favorite_videos_uses_publish_time_not_favorite_time(self, mock_open: mock.MagicMock) -> None:
+        mock_open.return_value = self.make_response(
+            {
+                "code": 0,
+                "data": {
+                    "medias": [
+                        {
+                            "title": "收藏视频",
+                            "upper": {"name": "UP"},
+                            "bvid": "BV1xx411c7mu",
+                            "aid": 106,
+                            "duration": 99,
+                            "cnt_info": {"play": 10, "danmaku": 2, "collect": 5},
+                            "pubtime": 1710000000,
+                            "fav_time": 1810000000,
+                            "intro": "简介",
+                            "link": "https://www.bilibili.com/video/BV1xx411c7mu",
+                        }
+                    ],
+                    "has_more": False,
+                },
+            }
+        )
+
+        items, has_more = cli.BilibiliClient().user_favorite_videos(10)
+
+        self.assertFalse(has_more)
+        self.assertEqual(items[0].title, "收藏视频")
+        self.assertEqual(items[0].pubdate, 1710000000)
+        self.assertEqual(items[0].favorite, 5)
 
     @mock.patch.object(cli.BilibiliClient, "_open")
     def test_comments_extracts_reply_items(self, mock_open: mock.MagicMock) -> None:
@@ -1014,6 +1107,22 @@ class HistoryStoreTests(unittest.TestCase):
             self.assertTrue(store.is_favorite(item))
             self.assertFalse(store.toggle_favorite(item))
             self.assertFalse(store.is_favorite(item))
+
+    def test_replace_favorites_persists_all_synced_items_beyond_local_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = f"{temp_dir}/history.json"
+            items = [
+                self.make_item(f"收藏视频 {index}", f"BV1xx411c7m{index}")
+                for index in range(3)
+            ]
+            store = cli.HistoryStore(path=path, max_favorites=2)
+            self.assertEqual(store.replace_favorites(items), 3)
+
+            reloaded = cli.HistoryStore(path=path, max_favorites=2)
+            self.assertEqual(
+                [item.title for item in reloaded.get_favorite_videos()],
+                ["收藏视频 0", "收藏视频 1", "收藏视频 2"],
+            )
 
 
 class TUIStateTests(unittest.TestCase):
