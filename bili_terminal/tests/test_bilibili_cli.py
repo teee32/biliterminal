@@ -1,6 +1,8 @@
+import base64
 import io
 import json
 import os
+import stat
 import sys
 import tempfile
 import unittest
@@ -317,6 +319,27 @@ class ClientCredentialsTests(unittest.TestCase):
                     data = json.load(f)
                 self.assertIn("SESSDATA=save_test_sessdata", data.get("cookie", ""))
                 self.assertEqual(data.get("SESSDATA"), "save_test_sessdata")
+                self.assertEqual(stat.S_IMODE(os.stat(cred_path).st_mode), 0o600)
+
+    def test_login_page_html_does_not_send_token_to_third_party_qr_service(self) -> None:
+        html = cli.build_login_page_html("https://passport.example/login?q=secret&x=<tag>")
+        self.assertNotIn("api.qrserver.com", html)
+        self.assertNotIn("create-qr-code", html)
+        self.assertIn("data:image/svg+xml;base64,", html)
+        self.assertIn("https://passport.example/login?q=secret&amp;x=&lt;tag&gt;", html)
+
+    def test_local_qr_data_uri_contains_standalone_svg(self) -> None:
+        data_uri = cli.qr_svg_data_uri("https://passport.example/login?q=secret")
+        self.assertTrue(data_uri.startswith("data:image/svg+xml;base64,"))
+        svg = base64.b64decode(data_uri.split(",", 1)[1]).decode("utf-8")
+        self.assertIn("<svg", svg)
+        self.assertIn("<rect", svg)
+        self.assertNotIn("passport.example", svg)
+
+    def test_local_qr_generator_handles_long_login_urls(self) -> None:
+        matrix = cli.qr_matrix("https://passport.example/login?" + ("token=abcdef&" * 30))
+        self.assertEqual(len(matrix), len(matrix[0]))
+        self.assertGreaterEqual(len(matrix), 21)
 
     def test_user_id_falls_back_to_nav_with_sessdata_only(self) -> None:
         client = cli.BilibiliClient()
@@ -818,6 +841,67 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(saved_state.pid, os.getpid())
         self.assertEqual(saved_state.control_pid, helper_process.pid)
 
+    def test_private_text_file_is_read_once_and_0600(self) -> None:
+        path = cli.write_private_text_file("biliterminal-test-cookie-", "SESSDATA=secret")
+        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
+        self.assertEqual(cli.read_private_text_once(path), "SESSDATA=secret")
+        self.assertFalse(os.path.exists(path))
+
+    @mock.patch.object(audio.subprocess, "Popen")
+    def test_spawn_audio_worker_passes_cookie_file_not_cookie_value(self, mock_popen: mock.MagicMock) -> None:
+        process = mock.MagicMock()
+        process.pid = 1234
+        mock_popen.return_value = process
+        stream = cli.AudioStream(
+            title="标题",
+            url="https://example.com/audio.m4s",
+            referer="https://www.bilibili.com/video/BV1",
+            user_agent="UA",
+            source_kind="dash-audio",
+            cookie_header="SESSDATA=secret",
+        )
+        pid = cli.spawn_audio_worker(stream, "BV1xx411c7mu")
+        self.assertEqual(pid, 1234)
+        command = mock_popen.call_args.args[0]
+        joined = " ".join(command)
+        self.assertIn("--cookie-file", command)
+        self.assertNotIn("SESSDATA=secret", joined)
+        cookie_path = command[command.index("--cookie-file") + 1]
+        try:
+            self.assertEqual(stat.S_IMODE(os.stat(cookie_path).st_mode), 0o600)
+            self.assertEqual(cli.read_private_text_once(cookie_path), "SESSDATA=secret")
+        finally:
+            if os.path.exists(cookie_path):
+                os.unlink(cookie_path)
+
+    @mock.patch.object(audio, "save_audio_playback_state")
+    @mock.patch.object(audio, "write_private_text_file", return_value="/tmp/biliterminal-cookie-file")
+    @mock.patch.object(audio.subprocess, "Popen")
+    def test_macos_native_helper_receives_cookie_file_path_not_cookie_value(
+        self,
+        mock_popen: mock.MagicMock,
+        mock_cookie_file: mock.MagicMock,
+        _mock_save: mock.MagicMock,
+    ) -> None:
+        helper_process = mock.MagicMock()
+        helper_process.pid = 9988
+        helper_process.wait.return_value = 0
+        mock_popen.return_value = helper_process
+        stream = cli.AudioStream(
+            title="标题",
+            url="https://example.com/audio.m4s",
+            referer="https://www.bilibili.com/video/BV1",
+            user_agent="UA",
+            source_kind="dash-audio",
+            cookie_header="SESSDATA=secret",
+        )
+        result = audio._run_macos_stream_worker(stream, "BV1xx411c7mu", "/tmp/biliterminal-audio-helper")
+        self.assertEqual(result, 0)
+        mock_cookie_file.assert_called_once_with("biliterminal-helper-cookie-", "SESSDATA=secret")
+        command = mock_popen.call_args.args[0]
+        self.assertEqual(command[-1], "/tmp/biliterminal-cookie-file")
+        self.assertNotIn("SESSDATA=secret", " ".join(command))
+
     @mock.patch.object(audio, "cleanup_audio_media_path")
     @mock.patch.object(audio, "save_audio_playback_state")
     @mock.patch.object(audio, "load_audio_playback_state")
@@ -954,12 +1038,18 @@ class VideoPlayerTests(unittest.TestCase):
             cookie_header=cookie_header,
         )
 
-    def test_ffmpeg_command_includes_headers_but_log_redacts_cookie(self) -> None:
+    def test_ffmpeg_command_uses_stdin_for_cookie_stream(self) -> None:
         command = vp._build_ffmpeg_command(self.make_stream("SESSDATA=secret"), 40, 12, fps=8)
-        self.assertIn("Cookie: SESSDATA=secret", command[command.index("-headers") + 1])
-        redacted = " ".join(vp._redact_ffmpeg_command(command))
-        self.assertIn("Cookie: <redacted>", redacted)
-        self.assertNotIn("secret", redacted)
+        joined = " ".join(command)
+        self.assertIn("pipe:0", command)
+        self.assertNotIn("https://example.com/video.m4s", joined)
+        self.assertNotIn("SESSDATA=secret", joined)
+
+    def test_ffmpeg_command_keeps_non_secret_headers_for_public_stream(self) -> None:
+        command = vp._build_ffmpeg_command(self.make_stream(), 40, 12, fps=8)
+        self.assertIn("-headers", command)
+        self.assertIn("Referer:", command[command.index("-headers") + 1])
+        self.assertIn("https://example.com/video.m4s", command)
 
     def test_stop_wakes_paused_process_and_closes_stderr(self) -> None:
         class FakeProcess:
@@ -1453,6 +1543,27 @@ class TUIStateTests(unittest.TestCase):
             tui.refresh_comments()
             tui.ensure_comments_for_selected.assert_called_once_with(force=True)
             self.assertIn("评论加载失败", tui.status)
+
+    def test_async_comment_load_preserves_worker_error_message(self) -> None:
+        class FailingClient(cli.BilibiliClient):
+            def comments(self, *_args, **_kwargs):
+                raise cli.BilibiliAPIError("boom")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = cli.HistoryStore(path=f"{temp_dir}/history.json")
+            tui = cli.BilibiliTUI(FailingClient(), store)
+            item = self.make_item()
+            tui.items = [item]
+            tui._start_comment_load(force=True, announce=True)
+            import time
+            deadline = time.time() + 2
+            while tui._jobs.empty() and time.time() < deadline:
+                time.sleep(0.01)
+            tui._drain_jobs()
+            key = item.bvid or str(item.aid)
+            self.assertEqual(tui.comment_errors[key], "boom")
+            self.assertIn("boom", tui.status)
+            self.assertNotIn("free variable", tui.status)
 
     def test_toggle_selected_favorite_adds_item(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

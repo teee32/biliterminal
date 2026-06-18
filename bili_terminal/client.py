@@ -6,6 +6,7 @@ import http.cookiejar
 import json
 import os
 import re
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -296,14 +297,36 @@ class BilibiliClient:
                 break
 
         cred_path = os.path.join(default_state_dir(), "credentials.json")
+        fd: int | None = None
+        temp_path = ""
         try:
             os.makedirs(os.path.dirname(cred_path), exist_ok=True)
-            with open(cred_path, "w", encoding="utf-8") as f:
+            fd, temp_path = tempfile.mkstemp(
+                prefix="credentials.",
+                suffix=".tmp",
+                dir=os.path.dirname(cred_path),
+                text=True,
+            )
+            os.chmod(temp_path, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump({
                     "cookie": cookie_str,
                     "SESSDATA": sessdata
                 }, f, indent=2, ensure_ascii=False)
+            os.replace(temp_path, cred_path)
+            os.chmod(cred_path, 0o600)
+            temp_path = ""
         except Exception as exc:
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            try:
+                if temp_path:
+                    os.unlink(temp_path)
+            except OSError:
+                pass
             raise BilibiliAPIError(f"保存凭据失败: {exc}") from exc
 
     def login_qrcode_generate(self) -> dict[str, Any]:

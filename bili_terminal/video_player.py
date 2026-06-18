@@ -14,6 +14,8 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
+import urllib.request
 from typing import TYPE_CHECKING
 
 from .paths import default_state_dir
@@ -171,20 +173,19 @@ def _build_ffmpeg_command(
     scale_h = rows
     scale_filter = f"scale={scale_w}:{scale_h}:flags=neighbor"
 
-    headers = f"Referer: {stream.referer}\r\nUser-Agent: {stream.user_agent}\r\n"
-    if getattr(stream, "cookie_header", ""):
-        headers += f"Cookie: {stream.cookie_header}\r\n"
-
     # -re 让 ffmpeg 以原生帧率实时读取输入流（网络流也适用），
     # 避免一口气解码完全部帧导致视频瞬间播完而音频仍在正常速度播放，
     # 从源头保证音画大致同步。
-    return [
+    command = [
         "ffmpeg",
         "-re",
-        "-headers",
-        headers,
-        "-i",
-        stream.url,
+    ]
+    if getattr(stream, "cookie_header", ""):
+        command.extend(["-i", "pipe:0"])
+    else:
+        headers = f"Referer: {stream.referer}\r\nUser-Agent: {stream.user_agent}\r\n"
+        command.extend(["-headers", headers, "-i", stream.url])
+    command.extend([
         "-vf",
         f"{scale_filter},fps={fps}",
         "-pix_fmt",
@@ -196,7 +197,8 @@ def _build_ffmpeg_command(
         "-loglevel",
         "error",
         "pipe:1",
-    ]
+    ])
+    return command
 
 
 def _redact_ffmpeg_command(command: list[str]) -> list[str]:
@@ -356,6 +358,59 @@ class FrameReader:
             pass
 
 
+class StreamFeeder:
+    """在独立线程中把认证 HTTP 流写入 ffmpeg stdin，避免 Cookie 出现在进程参数里。"""
+
+    def __init__(self, process: subprocess.Popen, stream: "VideoStream"):
+        self._process = process
+        self._stream = stream
+        self._running = False
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        self._running = True
+        self._thread = threading.Thread(target=self._feed_loop, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._running = False
+        stdin = self._process.stdin
+        if stdin is not None:
+            try:
+                stdin.close()
+            except OSError:
+                pass
+        if self._thread is not None and self._thread.is_alive():
+            self._thread.join(timeout=1.0)
+
+    def _feed_loop(self) -> None:
+        stdin = self._process.stdin
+        if stdin is None:
+            return
+        headers = {
+            "Referer": self._stream.referer,
+            "User-Agent": self._stream.user_agent,
+            "Accept": "*/*",
+            "Cookie": self._stream.cookie_header,
+        }
+        request = urllib.request.Request(self._stream.url, headers=headers)
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                while self._running:
+                    chunk = response.read(256 * 1024)
+                    if not chunk:
+                        break
+                    stdin.write(chunk)
+                    stdin.flush()
+        except (BrokenPipeError, OSError, urllib.error.URLError):
+            pass
+        finally:
+            try:
+                stdin.close()
+            except OSError:
+                pass
+
+
 # ── 视频播放器 ──────────────────────────────────────────────
 
 
@@ -377,6 +432,7 @@ class VideoPlayer:
         self._video_key = video_key
         self._process: subprocess.Popen | None = None
         self._reader: FrameReader | None = None
+        self._feeder: StreamFeeder | None = None
         self._paused = False
         self._last_render: str | None = None
         self._stderr_handle: object = None
@@ -412,7 +468,7 @@ class VideoPlayer:
                 command,
                 stdout=subprocess.PIPE,
                 stderr=self._stderr_handle,
-                stdin=subprocess.DEVNULL,
+                stdin=subprocess.PIPE if getattr(self._stream, "cookie_header", "") else subprocess.DEVNULL,
             )
         except Exception:
             try:
@@ -423,6 +479,9 @@ class VideoPlayer:
             raise
         self._reader = FrameReader(self._process, self._cols, self._rows)
         self._reader.start()
+        if getattr(self._stream, "cookie_header", ""):
+            self._feeder = StreamFeeder(self._process, self._stream)
+            self._feeder.start()
         self._paused = False
         self._last_render = None
 
@@ -441,11 +500,16 @@ class VideoPlayer:
     def stop(self, *, silent: bool = False) -> None:
         """停止 ffmpeg 和帧读取器。"""
         reader = self._reader
+        feeder = self._feeder
         process = self._process
 
         if reader is not None:
             reader._running = False
         self._reader = None
+        self._feeder = None
+
+        if feeder is not None:
+            feeder.stop()
 
         if process is not None:
             try:

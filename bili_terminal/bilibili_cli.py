@@ -49,6 +49,7 @@ from .audio import (
     play_audio_for_item,
     play_audio_stream,
     prepare_audio_temp_path,
+    read_private_text_once,
     resume_audio_playback,
     resume_signal_for_state,
     run_audio_worker,
@@ -61,8 +62,9 @@ from .audio import (
     stream_mime_type,
     toggle_audio_playback,
     wait_for_audio_exit,
+    write_private_text_file,
 )
-from .cli import build_parser, main, run_once
+from .cli import build_login_page_html, build_parser, main, run_once
 from .client import (
     COMMENT_WBI_MIXIN_TABLE,
     COMMENT_WEB_LOCATION,
@@ -108,6 +110,7 @@ from .output import (
     print_video_list,
 )
 from .paths import DEFAULT_HISTORY_FILENAME, DEFAULT_STATE_DIR, default_history_path, default_state_dir
+from .qr import qr_matrix, qr_svg, qr_svg_data_uri
 from .repl import BilibiliCLI, open_video_target
 from .textutil import (
     centered_x,

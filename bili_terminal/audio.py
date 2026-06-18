@@ -42,8 +42,6 @@ def build_mpv_command(stream: AudioStream, ipc_socket: str | None = None) -> lis
         f"--referrer={stream.referer}",
         f"--user-agent={stream.user_agent}",
     ]
-    if getattr(stream, "cookie_header", ""):
-        command.append(f"--http-header-fields=Cookie: {stream.cookie_header}")
     if ipc_socket:
         command.append(f"--input-ipc-server={ipc_socket}")
     command.append(stream.url)
@@ -54,8 +52,6 @@ def build_ffplay_command(stream: AudioStream) -> list[str] | None:
     if not shutil.which("ffplay"):
         return None
     headers = f"Referer: {stream.referer}\r\nUser-Agent: {stream.user_agent}\r\n"
-    if getattr(stream, "cookie_header", ""):
-        headers += f"Cookie: {stream.cookie_header}\r\n"
     return [
         "ffplay",
         "-nodisp",
@@ -75,6 +71,36 @@ def build_audio_player_command(stream: AudioStream) -> list[str] | None:
 def stream_mime_type(url: str) -> str | None:
     suffix = os.path.splitext(urllib.parse.urlparse(url).path)[1].lower()
     return STREAM_MIME_BY_SUFFIX.get(suffix)
+
+
+def write_private_text_file(prefix: str, text: str) -> str:
+    temp_file = tempfile.NamedTemporaryFile(prefix=prefix, delete=False, mode="w", encoding="utf-8")
+    try:
+        os.chmod(temp_file.name, 0o600)
+        temp_file.write(text)
+        temp_file.close()
+        return temp_file.name
+    except Exception:
+        name = temp_file.name
+        temp_file.close()
+        try:
+            os.unlink(name)
+        except OSError:
+            pass
+        raise
+
+
+def read_private_text_once(path: str | None) -> str:
+    if not path:
+        return ""
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            return handle.read()
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
 
 
 def mpv_ipc_socket_path() -> str:
@@ -413,6 +439,7 @@ def toggle_audio_playback() -> str:
 def spawn_audio_worker(stream: AudioStream, video_key: str | None) -> int:
     log_path = audio_worker_log_path()
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    cookie_file = ""
     command = [
         sys.executable,
         "-m",
@@ -428,21 +455,30 @@ def spawn_audio_worker(stream: AudioStream, video_key: str | None) -> int:
         stream.title,
     ]
     if getattr(stream, "cookie_header", ""):
-        command.extend(["--cookie", stream.cookie_header])
+        cookie_file = write_private_text_file("biliterminal-cookie-", stream.cookie_header)
+        command.extend(["--cookie-file", cookie_file])
     if video_key:
         command.extend(["--video-key", video_key])
     env = dict(os.environ)
     package_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     env["PYTHONPATH"] = package_root + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
-    with open(log_path, "ab") as log_handle:
-        process = subprocess.Popen(
-            command,
-            stdout=log_handle,
-            stderr=log_handle,
-            stdin=subprocess.DEVNULL,
-            start_new_session=True,
-            env=env,
-        )
+    try:
+        with open(log_path, "ab") as log_handle:
+            process = subprocess.Popen(
+                command,
+                stdout=log_handle,
+                stderr=log_handle,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,
+                env=env,
+            )
+    except Exception:
+        if cookie_file:
+            try:
+                os.unlink(cookie_file)
+            except OSError:
+                pass
+        raise
     return process.pid
 
 
@@ -535,10 +571,65 @@ def _run_player_process(command: list[str]) -> subprocess.Popen:
     )
 
 
+def _run_downloaded_player_worker(
+    stream: AudioStream,
+    resolved_key: str | None,
+    command: list[str],
+    *,
+    ipc_socket: str | None = None,
+    backend: str = "process",
+) -> int:
+    temp_path = prepare_audio_temp_path(stream.url)
+    if ipc_socket:
+        os.makedirs(os.path.dirname(ipc_socket), exist_ok=True)
+        cleanup_audio_ipc_socket(ipc_socket)
+    try:
+        save_audio_playback_state(
+            AudioPlaybackState(
+                pid=os.getpid(),
+                title=stream.title,
+                video_key=resolved_key,
+                backend=backend,
+                paused=False,
+                media_path=temp_path,
+                ipc_socket=ipc_socket,
+            )
+        )
+        download_audio_to_path(stream.url, stream.referer, stream.user_agent, temp_path, cookie_header=stream.cookie_header)
+        player_command = [temp_path if part == "{media_path}" else part for part in command]
+        process = _run_player_process(player_command)
+        save_audio_playback_state(
+            AudioPlaybackState(
+                pid=os.getpid(),
+                title=stream.title,
+                video_key=resolved_key,
+                backend=backend,
+                paused=False,
+                control_pid=process.pid,
+                media_path=temp_path,
+                ipc_socket=ipc_socket,
+            )
+        )
+        return process.wait()
+    finally:
+        cleanup_audio_media_path(temp_path)
+        cleanup_audio_ipc_socket(ipc_socket)
+
+
 def _run_mpv_worker(stream: AudioStream, resolved_key: str | None) -> int:
     ipc_socket = mpv_ipc_socket_path()
     os.makedirs(os.path.dirname(ipc_socket), exist_ok=True)
     cleanup_audio_ipc_socket(ipc_socket)
+    if stream.cookie_header:
+        command = [
+            "mpv",
+            "--no-video",
+            "--force-window=no",
+            f"--title={stream.title}",
+            f"--input-ipc-server={ipc_socket}",
+            "{media_path}",
+        ]
+        return _run_downloaded_player_worker(stream, resolved_key, command, ipc_socket=ipc_socket)
     command = build_mpv_command(stream, ipc_socket)
     if command is None:
         raise BilibiliAPIError("mpv 不可用")
@@ -561,15 +652,20 @@ def _run_mpv_worker(stream: AudioStream, resolved_key: str | None) -> int:
 
 
 def _run_macos_stream_worker(stream: AudioStream, resolved_key: str | None, helper_path: str) -> int:
+    cookie_file = ""
+    command = [
+        helper_path,
+        "--stream",
+        stream.url,
+        stream.referer,
+        stream.user_agent,
+        stream_mime_type(stream.url) or "",
+    ]
+    if stream.cookie_header:
+        cookie_file = write_private_text_file("biliterminal-helper-cookie-", stream.cookie_header)
+        command.append(cookie_file)
     process = _run_player_process(
-        [
-            helper_path,
-            "--stream",
-            stream.url,
-            stream.referer,
-            stream.user_agent,
-            stream_mime_type(stream.url) or "",
-        ]
+        command
     )
     save_audio_playback_state(
         AudioPlaybackState(
@@ -581,7 +677,14 @@ def _run_macos_stream_worker(stream: AudioStream, resolved_key: str | None, help
             control_pid=process.pid,
         )
     )
-    return process.wait()
+    try:
+        return process.wait()
+    finally:
+        if cookie_file:
+            try:
+                os.unlink(cookie_file)
+            except OSError:
+                pass
 
 
 def _run_macos_download_worker(stream: AudioStream, resolved_key: str | None, helper_path: str) -> int:
@@ -617,6 +720,16 @@ def _run_macos_download_worker(stream: AudioStream, resolved_key: str | None, he
 
 
 def _run_ffplay_worker(stream: AudioStream, resolved_key: str | None) -> int:
+    if stream.cookie_header:
+        command = [
+            "ffplay",
+            "-nodisp",
+            "-autoexit",
+            "-loglevel",
+            "warning",
+            "{media_path}",
+        ]
+        return _run_downloaded_player_worker(stream, resolved_key, command)
     command = build_ffplay_command(stream)
     if command is None:
         raise BilibiliAPIError("ffplay 不可用")

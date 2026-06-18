@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import html
 import os
 import sys
 import webbrowser
@@ -8,6 +9,7 @@ import webbrowser
 from .audio import (
     pause_audio_playback,
     play_audio_for_item,
+    read_private_text_once,
     resume_audio_playback,
     run_audio_worker,
     stop_audio_playback,
@@ -17,6 +19,7 @@ from .client import BilibiliClient
 from .history import HistoryStore
 from .models import BilibiliAPIError
 from .output import print_comments, print_favorite_folders, print_favorites, print_history, print_import_result, print_video_detail, print_video_list
+from .qr import qr_svg_data_uri
 from .repl import BilibiliCLI, open_video_target
 from .tui import run_tui
 
@@ -88,8 +91,77 @@ def build_parser() -> argparse.ArgumentParser:
     audio_worker_parser.add_argument("--user-agent", required=True, help=argparse.SUPPRESS)
     audio_worker_parser.add_argument("--title", default="", help=argparse.SUPPRESS)
     audio_worker_parser.add_argument("--video-key", default="", help=argparse.SUPPRESS)
-    audio_worker_parser.add_argument("--cookie", default="", help=argparse.SUPPRESS)
+    audio_worker_parser.add_argument("--cookie-file", default="", help=argparse.SUPPRESS)
     return parser
+
+
+def build_login_page_html(url: str) -> str:
+    safe_url = html.escape(url, quote=True)
+    safe_qr = html.escape(qr_svg_data_uri(url), quote=True)
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>BiliTerminal 登录</title>
+    <style>
+        body {{
+            background-color: #1a1a1a;
+            color: #ffffff;
+            font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }}
+        .card {{
+            background-color: #2d2d2d;
+            padding: 40px;
+            border-radius: 12px;
+            text-align: center;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+            max-width: 520px;
+        }}
+        h2 {{
+            margin-top: 0;
+            color: #fb7299;
+        }}
+        .qr {{
+            width: 260px;
+            height: 260px;
+            background: #ffffff;
+            border-radius: 8px;
+            padding: 14px;
+            margin: 18px auto;
+            box-sizing: border-box;
+        }}
+        .tips {{
+            color: #aaaaaa;
+            font-size: 13px;
+            line-height: 1.6;
+            word-break: break-all;
+            margin: 10px 0 0 0;
+        }}
+        a {{
+            color: #fb7299;
+            text-decoration: none;
+        }}
+        a:hover {{
+            text-decoration: underline;
+        }}
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>BiliTerminal 登录</h2>
+        <p>请使用 Bilibili 手机 App 扫描下方二维码。</p>
+        <img class="qr" src="{safe_qr}" alt="Bilibili 登录二维码">
+        <p class="tips"><a href="{safe_url}" target="_blank" rel="noreferrer">{safe_url}</a></p>
+        <p class="tips" style="margin-top: 15px;">二维码在本地生成，不会把登录链接发送给第三方服务。</p>
+    </div>
+</body>
+</html>
+"""
 
 
 def run_once(args: argparse.Namespace, client: BilibiliClient, history_store: HistoryStore) -> int:
@@ -184,7 +256,8 @@ def run_once(args: argparse.Namespace, client: BilibiliClient, history_store: Hi
     if args.command == "login":
         return run_login(client)
     if args.command == "audio-worker":
-        return run_audio_worker(args.url, args.referer, args.user_agent, args.title, args.video_key or None, cookie=args.cookie or "")
+        cookie = read_private_text_once(args.cookie_file)
+        return run_audio_worker(args.url, args.referer, args.user_agent, args.title, args.video_key or None, cookie=cookie)
     BilibiliCLI(client, history_store).cmdloop()
     return 0
 
@@ -268,7 +341,7 @@ def run_login(client: BilibiliClient) -> int:
     print("==================================================")
 
     # 支持纯 CLI 环境下手动输入 Cookie
-    user_cookie = input("请输入 Bilibili Cookie (直接回车将使用扫码登录): ").strip()
+    user_cookie = input("请输入 Bilibili Cookie (直接回车将使用本地二维码登录): ").strip()
     if user_cookie:
         try:
             client._set_cookie_string(user_cookie)
@@ -279,7 +352,7 @@ def run_login(client: BilibiliClient) -> int:
             print(f"\n[-] 保存 Cookie 失败: {exc}")
             return 1
 
-    # 如果用户直接回车，则进行扫码登录
+    # 如果用户直接回车，则进行本地二维码登录确认
     print("\n[+] 正在请求登录二维码...")
     temp_html_path = ""
     try:
@@ -287,107 +360,37 @@ def run_login(client: BilibiliClient) -> int:
         url = qr_data.get("url")
         qrcode_key = qr_data.get("qrcode_key")
         if not url or not qrcode_key:
-            print("[-] 获取二维码失败: 接口返回数据不完整")
+            print("[-] 获取登录二维码失败: 接口返回数据不完整")
             return 1
 
-        print("\n[+] 二维码请求成功！")
-        print(f"请使用 Bilibili 手机 App 扫描二维码登录。扫码链接如下:\n")
+        print("\n[+] 登录二维码请求成功！")
+        print("请使用 Bilibili 手机 App 扫描浏览器里的本地二维码。扫码链接如下:\n")
         print(f"  {url}")
         print("\n--------------------------------------------------")
 
-        # 生成一个展示二维码的临时 HTML 文件
+        # 生成一个本地二维码登录页面。登录 URL 本身是凭据，不交给第三方服务。
         import tempfile
-        import urllib.parse
-
-        html_content = f"""<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <title>BiliTerminal 扫码登录</title>
-    <style>
-        body {{
-            background-color: #1a1a1a;
-            color: #ffffff;
-            font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            margin: 0;
-        }}
-        .card {{
-            background-color: #2d2d2d;
-            padding: 40px;
-            border-radius: 12px;
-            text-align: center;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
-            max-width: 420px;
-        }}
-        h2 {{
-            margin-top: 0;
-            color: #fb7299;
-        }}
-        .qr-container {{
-            background-color: #ffffff;
-            padding: 16px;
-            border-radius: 8px;
-            display: inline-block;
-            margin: 20px 0;
-        }}
-        img {{
-            display: block;
-        }}
-        .tips {{
-            color: #aaaaaa;
-            font-size: 13px;
-            line-height: 1.6;
-            word-break: break-all;
-            margin: 10px 0 0 0;
-        }}
-        a {{
-            color: #fb7299;
-            text-decoration: none;
-        }}
-        a:hover {{
-            text-decoration: underline;
-        }}
-    </style>
-</head>
-<body>
-    <div class="card">
-        <h2>BiliTerminal 扫码登录</h2>
-        <p>请使用 <b>Bilibili 手机 App</b> 扫描下方二维码：</p>
-        <div class="qr-container">
-            <img src="https://api.qrserver.com/v1/create-qr-code/?size=250x250&data={urllib.parse.quote(url)}" width="250" height="250" alt="QR Code">
-        </div>
-        <p class="tips">如果二维码无法显示，请将此链接发送到手机并打开：<br>
-        <a href="{url}" target="_blank">{url}</a></p>
-        <p class="tips" style="margin-top: 15px;">扫码成功并在手机上确认后，终端将自动完成登录。</p>
-    </div>
-</body>
-</html>
-"""
         try:
             with tempfile.NamedTemporaryFile(suffix=".html", delete=False, mode="w", encoding="utf-8") as f:
-                f.write(html_content)
+                f.write(build_login_page_html(url))
                 temp_html_path = f.name
         except Exception as exc:
-            print(f"[!] 创建临时二维码页面失败: {exc}")
+            print(f"[!] 创建临时登录页面失败: {exc}")
 
-        # 尝试使用 webbrowser 自动打开展示二维码的本地 HTML 文件
+        # 尝试使用 webbrowser 自动打开本地登录 HTML 文件
         try:
             if temp_html_path:
                 webbrowser.open(f"file://{temp_html_path}")
-                print("[+] 已自动在您的默认浏览器中打开二维码登录页面。")
+                print("[+] 已自动在您的默认浏览器中打开本地二维码页面。")
             else:
                 webbrowser.open(url)
                 print("[+] 已自动在您的默认浏览器中打开登录链接。")
         except Exception:
             print("[!] 未能自动打开浏览器，请手动复制上面的链接。")
 
-        print("[-] 正在等待您在手机端扫码并确认登录 (可按 Ctrl+C 取消)...")
+        print("[-] 正在等待您确认登录 (可按 Ctrl+C 取消)...")
 
-        # 轮询扫码状态
+        # 轮询登录确认状态
         expired = False
         while not expired:
             time.sleep(2)
@@ -397,18 +400,18 @@ def run_login(client: BilibiliClient) -> int:
                 message = poll_res.get("message", "未知状态")
 
                 if code == 0:
-                    print("\n[+] 扫码登录成功！欢迎使用！")
+                    print("\n[+] 登录成功！欢迎使用！")
                     return 0
                 elif code == 86101:
-                    # 未扫码
+                    # 未确认
                     sys.stdout.write(".")
                     sys.stdout.flush()
                 elif code == 86090:
-                    # 已扫码未确认
+                    # 已打开未确认
                     sys.stdout.write("o")
                     sys.stdout.flush()
                 elif code == 86038:
-                    print("\n[-] 二维码已过期，请重新运行登录命令。")
+                    print("\n[-] 登录二维码已过期，请重新运行登录命令。")
                     expired = True
                 else:
                     print(f"\n[-] 轮询状态异常: code={code}, message={message}")

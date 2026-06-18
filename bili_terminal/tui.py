@@ -211,14 +211,15 @@ class BilibiliTUI:
             try:
                 result = work()
             except Exception as exc:  # noqa: BLE001 — 线程内必须兜底，否则 _comment_inflight 泄漏
+                error_message = str(exc)
                 def apply_error(_: Any) -> None:
                     self._comment_inflight.discard(key)
                     self.comment_cache[key] = []
                     self.comment_loaded.discard(key)
-                    self.comment_errors[key] = str(exc)
+                    self.comment_errors[key] = error_message
                     self._detail_lines_cache = None
                     if announce:
-                        self.set_status(f"评论加载失败: {exc}", sticky=True)
+                        self.set_status(f"评论加载失败: {error_message}", sticky=True)
                 self._jobs.put((apply_error, None, None))
                 return
             self._jobs.put((apply, result, None))
