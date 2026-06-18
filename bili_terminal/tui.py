@@ -1800,25 +1800,12 @@ class BilibiliTUI:
                 err_msg = str(stream) if isinstance(stream, Exception) else "无法获取视频流"
                 self._fail_video_mode(f"无法播放视频: {err_msg}")
                 return
-            # 计算视频区域（在 enter 时 stdscr 可能不可用，使用保守默认值）
-            cols, rows = 80, 24
-            try:
-                # try to get actual terminal size
-                import sys
-                import fcntl
-                import struct
-                import termios
-                s = struct.pack("HHHH", 0, 0, 0, 0)
-                fd = sys.stdout.fileno()
-                try:
-                    res = fcntl.ioctl(fd, termios.TIOCGWINSZ, s)
-                    rows, cols = struct.unpack("HHHH", res)[:2]
-                except (OSError, AttributeError):
-                    pass
-            except Exception:
-                pass
-            usable_cols = cols
-            usable_rows = max(5, rows)
+            # 端末サイズは shutil 標準 API で取得：Windows でも動き、
+            # COLUMNS/LINES 環境変数や fallback (80x24) も面倒見てくれる
+            import shutil
+            size = shutil.get_terminal_size((80, 24))
+            usable_cols = size.columns
+            usable_rows = max(5, size.lines)
             v_cols, v_rows = vp.calc_video_dimensions(usable_cols, usable_rows)
             try:
                 player = vp.VideoPlayer(

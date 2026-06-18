@@ -6,6 +6,7 @@ import http.cookiejar
 import json
 import os
 import re
+import sys
 import tempfile
 import time
 import urllib.error
@@ -253,7 +254,7 @@ class BilibiliClient:
                 domain_initial_dot=True,
                 path="/",
                 path_specified=True,
-                secure=False,
+                secure=True,
                 expires=None,
                 discard=True,
                 comment=None,
@@ -271,15 +272,21 @@ class BilibiliClient:
 
         if not cookie_str and not sessdata:
             cred_path = os.path.join(default_state_dir(), "credentials.json")
-            try:
-                if os.path.exists(cred_path):
+            if os.path.exists(cred_path):
+                try:
                     with open(cred_path, "r", encoding="utf-8") as f:
                         data = json.load(f)
-                        if isinstance(data, dict):
-                            cookie_str = data.get("cookie", "").strip()
-                            sessdata = data.get("SESSDATA", "").strip()
-            except Exception:
-                pass
+                except (OSError, json.JSONDecodeError) as exc:
+                    # 静かに未ログインへフォールバックすると原因が分からないので、
+                    # 破損や読み取り不能だけは stderr に出して本人に気付いてもらう。
+                    print(
+                        f"[biliterminal] 凭据文件 {cred_path} 读取失败 ({exc.__class__.__name__}: {exc})；将以未登录状态启动",
+                        file=sys.stderr,
+                    )
+                    data = None
+                if isinstance(data, dict):
+                    cookie_str = str(data.get("cookie") or "").strip()
+                    sessdata = str(data.get("SESSDATA") or "").strip()
 
         if cookie_str:
             self._set_cookie_string(cookie_str)

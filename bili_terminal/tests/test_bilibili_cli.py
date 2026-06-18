@@ -1044,12 +1044,16 @@ class VideoPlayerTests(unittest.TestCase):
         self.assertIn("pipe:0", command)
         self.assertNotIn("https://example.com/video.m4s", joined)
         self.assertNotIn("SESSDATA=secret", joined)
+        self.assertNotIn("-headers", command)
 
-    def test_ffmpeg_command_keeps_non_secret_headers_for_public_stream(self) -> None:
+    def test_ffmpeg_command_uses_stdin_even_without_cookie(self) -> None:
+        # Bilibili CDN URL は署名トークン入りなので、未ログイン時でも
+        # ffmpeg の argv (= `ps` から見える) に出さず、StreamFeeder 経由で投入する
         command = vp._build_ffmpeg_command(self.make_stream(), 40, 12, fps=8)
-        self.assertIn("-headers", command)
-        self.assertIn("Referer:", command[command.index("-headers") + 1])
-        self.assertIn("https://example.com/video.m4s", command)
+        joined = " ".join(command)
+        self.assertIn("pipe:0", command)
+        self.assertNotIn("-headers", command)
+        self.assertNotIn("https://example.com/video.m4s", joined)
 
     def test_stop_wakes_paused_process_and_closes_stderr(self) -> None:
         class FakeProcess:

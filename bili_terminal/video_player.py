@@ -168,6 +168,9 @@ def _build_ffmpeg_command(
 
     输出 raw RGB24 到 stdout pipe，尺寸为 cols × rows。
     每个终端字符对应一个像素。
+
+    输入流统一通过 stdin 管道喂入，避免 Bilibili CDN URL
+    （可能含签名 token）出现在进程参数表里。
     """
     scale_w = cols
     scale_h = rows
@@ -176,16 +179,11 @@ def _build_ffmpeg_command(
     # -re 让 ffmpeg 以原生帧率实时读取输入流（网络流也适用），
     # 避免一口气解码完全部帧导致视频瞬间播完而音频仍在正常速度播放，
     # 从源头保证音画大致同步。
-    command = [
+    return [
         "ffmpeg",
         "-re",
-    ]
-    if getattr(stream, "cookie_header", ""):
-        command.extend(["-i", "pipe:0"])
-    else:
-        headers = f"Referer: {stream.referer}\r\nUser-Agent: {stream.user_agent}\r\n"
-        command.extend(["-headers", headers, "-i", stream.url])
-    command.extend([
+        "-i",
+        "pipe:0",
         "-vf",
         f"{scale_filter},fps={fps}",
         "-pix_fmt",
@@ -197,26 +195,7 @@ def _build_ffmpeg_command(
         "-loglevel",
         "error",
         "pipe:1",
-    ])
-    return command
-
-
-def _redact_ffmpeg_command(command: list[str]) -> list[str]:
-    redacted = list(command)
-    try:
-        header_index = redacted.index("-headers") + 1
-    except ValueError:
-        return redacted
-    if header_index >= len(redacted):
-        return redacted
-    header_lines = []
-    for line in redacted[header_index].splitlines():
-        if line.lower().startswith("cookie:"):
-            header_lines.append("Cookie: <redacted>")
-        else:
-            header_lines.append(line)
-    redacted[header_index] = "\\r\\n".join(header_lines)
-    return redacted
+    ]
 
 
 # ── RGB → ASCII 字符画渲染 ──────────────────────────────────
@@ -391,8 +370,10 @@ class StreamFeeder:
             "Referer": self._stream.referer,
             "User-Agent": self._stream.user_agent,
             "Accept": "*/*",
-            "Cookie": self._stream.cookie_header,
         }
+        # 空 Cookie ヘッダは bilibili に弾かれる可能性があるので未ログイン時は付けない
+        if self._stream.cookie_header:
+            headers["Cookie"] = self._stream.cookie_header
         request = urllib.request.Request(self._stream.url, headers=headers)
         try:
             with urllib.request.urlopen(request, timeout=60) as response:
@@ -460,7 +441,7 @@ class VideoPlayer:
         self.stop(silent=True)
 
         command = _build_ffmpeg_command(self._stream, self._cols, self._rows, self._fps)
-        _write_video_log(f"启动 ffmpeg: {' '.join(_redact_ffmpeg_command(command))}")
+        _write_video_log(f"启动 ffmpeg: {' '.join(command)}")
         stderr_log_path = _video_log_path()
         self._stderr_handle = open(stderr_log_path, "ab")
         try:
@@ -468,7 +449,7 @@ class VideoPlayer:
                 command,
                 stdout=subprocess.PIPE,
                 stderr=self._stderr_handle,
-                stdin=subprocess.PIPE if getattr(self._stream, "cookie_header", "") else subprocess.DEVNULL,
+                stdin=subprocess.PIPE,
             )
         except Exception:
             try:
@@ -479,9 +460,10 @@ class VideoPlayer:
             raise
         self._reader = FrameReader(self._process, self._cols, self._rows)
         self._reader.start()
-        if getattr(self._stream, "cookie_header", ""):
-            self._feeder = StreamFeeder(self._process, self._stream)
-            self._feeder.start()
+        # 入力 URL は常に StreamFeeder 経由で stdin に流し込み、
+        # bilibili の署名付き CDN URL を ffmpeg の argv に出さない
+        self._feeder = StreamFeeder(self._process, self._stream)
+        self._feeder.start()
         self._paused = False
         self._last_render = None
 
@@ -514,7 +496,7 @@ class VideoPlayer:
         if process is not None:
             try:
                 if process.poll() is None:
-                    if self._paused:
+                    if self._paused and hasattr(signal, "SIGCONT"):
                         try:
                             process.send_signal(signal.SIGCONT)
                         except ProcessLookupError:
@@ -555,6 +537,10 @@ class VideoPlayer:
         """暂停视频（SIGSTOP ffmpeg 进程）。"""
         if self._process is None or self._paused:
             return
+        # Windows 等 SIGSTOP を持たない環境では一時停止を諦めて再生継続
+        if not hasattr(signal, "SIGSTOP"):
+            _write_video_log("当前平台不支持 SIGSTOP，跳过视频暂停")
+            return
         try:
             if self._process.poll() is None:
                 self._process.send_signal(signal.SIGSTOP)
@@ -573,6 +559,8 @@ class VideoPlayer:
     def resume(self) -> None:
         """继续视频（SIGCONT ffmpeg 进程）。"""
         if self._process is None or not self._paused:
+            return
+        if not hasattr(signal, "SIGCONT"):
             return
         try:
             if self._process.poll() is None:
