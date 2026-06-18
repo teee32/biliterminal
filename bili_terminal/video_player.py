@@ -655,6 +655,15 @@ def has_ffmpeg() -> bool:
     return shutil.which("ffmpeg") is not None
 
 
+def ffmpeg_install_hint() -> str:
+    """根据当前平台返回安装 ffmpeg 的建议命令。"""
+    if sys.platform == "darwin":
+        return "未找到 ffmpeg，请执行 brew install ffmpeg"
+    if sys.platform.startswith("win"):
+        return "未找到 ffmpeg，请执行 winget install ffmpeg"
+    return "未找到 ffmpeg，请通过包管理器安装（如 sudo apt install ffmpeg）"
+
+
 def play_video_for_item(
     client: "BilibiliClient",
     item: "VideoItem",

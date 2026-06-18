@@ -1771,7 +1771,7 @@ class BilibiliTUI:
     def enter_video_mode(self) -> None:
         """进入视频播放模式。"""
         if not vp.has_ffmpeg():
-            self.set_status("未找到 ffmpeg，请执行 brew install ffmpeg", sticky=True)
+            self.set_status(vp.ffmpeg_install_hint(), sticky=True)
             return
 
         item = self.current_detail_item() if self.detail_mode else self.selected_item
