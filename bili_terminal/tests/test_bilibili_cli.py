@@ -319,6 +319,7 @@ class ClientCredentialsTests(unittest.TestCase):
                     data = json.load(f)
                 self.assertIn("SESSDATA=save_test_sessdata", data.get("cookie", ""))
                 self.assertEqual(data.get("SESSDATA"), "save_test_sessdata")
+                self.assertEqual(stat.S_IMODE(os.stat(temp_dir).st_mode), 0o700)
                 self.assertEqual(stat.S_IMODE(os.stat(cred_path).st_mode), 0o600)
 
     def test_login_page_html_does_not_send_token_to_third_party_qr_service(self) -> None:

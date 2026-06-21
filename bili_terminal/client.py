@@ -307,11 +307,16 @@ class BilibiliClient:
         fd: int | None = None
         temp_path = ""
         try:
-            os.makedirs(os.path.dirname(cred_path), exist_ok=True)
+            state_dir = os.path.dirname(cred_path)
+            os.makedirs(state_dir, mode=0o700, exist_ok=True)
+            try:
+                os.chmod(state_dir, 0o700)
+            except OSError:
+                pass
             fd, temp_path = tempfile.mkstemp(
                 prefix="credentials.",
                 suffix=".tmp",
-                dir=os.path.dirname(cred_path),
+                dir=state_dir,
                 text=True,
             )
             os.chmod(temp_path, 0o600)
