@@ -49,6 +49,7 @@ from .audio import (
     play_audio_for_item,
     play_audio_stream,
     prepare_audio_temp_path,
+    read_private_text_once,
     resume_audio_playback,
     resume_signal_for_state,
     run_audio_worker,
@@ -61,16 +62,19 @@ from .audio import (
     stream_mime_type,
     toggle_audio_playback,
     wait_for_audio_exit,
+    write_private_text_file,
 )
-from .cli import build_parser, main, run_once
+from .cli import build_login_page_html, build_parser, main, run_once
 from .client import (
     COMMENT_WBI_MIXIN_TABLE,
     COMMENT_WEB_LOCATION,
     DEFAULT_TIMEOUT,
     DEFAULT_USER_AGENT,
     BilibiliClient,
+    canonical_video_referer,
     decode_response_body,
     extract_audio_stream,
+    extract_video_stream,
     mixin_wbi_key,
     sign_wbi_params,
 )
@@ -84,6 +88,8 @@ from .models import (
     CommentItem,
     ListState,
     VideoItem,
+    VideoPlaybackState,
+    VideoStream,
     build_video_url,
     build_watch_url,
     comments_from_payload,
@@ -104,6 +110,7 @@ from .output import (
     print_video_list,
 )
 from .paths import DEFAULT_HISTORY_FILENAME, DEFAULT_STATE_DIR, default_history_path, default_state_dir
+from .qr import qr_matrix, qr_svg, qr_svg_data_uri
 from .repl import BilibiliCLI, open_video_target
 from .textutil import (
     centered_x,
@@ -123,6 +130,15 @@ from .textutil import (
     wrap_display,
 )
 from .tui import BILIBILI_PINK_RGB, HOME_CHANNELS, BilibiliTUI, run_tui
+from .video_player import (
+    FrameReader,
+    VideoPlayer,
+    calc_video_dimensions,
+    has_ffmpeg,
+    play_video_for_item,
+    render_frame,
+    video_stream_for_item,
+)
 
 __all__ = [name for name in dir() if not name.startswith("_")]
 

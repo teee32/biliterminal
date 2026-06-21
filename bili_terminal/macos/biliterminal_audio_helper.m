@@ -2,10 +2,11 @@
 #import <AVFoundation/AVFoundation.h>
 #import <CoreMedia/CoreMedia.h>
 #import <signal.h>
+#import <unistd.h>
 
 // 用法:
 //   biliterminal-audio-helper <audio-file>
-//   biliterminal-audio-helper --stream <url> <referer> <user-agent> [mime]
+//   biliterminal-audio-helper --stream <url> <referer> <user-agent> [mime] [cookie-file]
 //
 // 信号协议: SIGUSR1 暂停, SIGUSR2 继续, SIGTERM/SIGINT 停止。
 // 暂停走 AVPlayer/AVAudioPlayer 原生 pause，不会留下未消费的
@@ -32,7 +33,22 @@ static void install_signal_handlers(void) {
     signal(SIGUSR2, handle_signal);
 }
 
-static int run_stream_mode(NSString *urlString, NSString *referer, NSString *userAgent, NSString *mimeType) {
+static NSString *read_cookie_file(NSString *path) {
+    if (path.length == 0) {
+        return @"";
+    }
+    NSError *error = nil;
+    NSString *cookie = [NSString stringWithContentsOfFile:path
+                                                  encoding:NSUTF8StringEncoding
+                                                     error:&error];
+    unlink(path.fileSystemRepresentation);
+    if (cookie == nil) {
+        return @"";
+    }
+    return [cookie stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+}
+
+static int run_stream_mode(NSString *urlString, NSString *referer, NSString *userAgent, NSString *mimeType, NSString *cookieFile) {
     NSURL *url = [NSURL URLWithString:urlString];
     if (url == nil) {
         fprintf(stderr, "invalid stream url\n");
@@ -46,12 +62,16 @@ static int run_stream_mode(NSString *urlString, NSString *referer, NSString *use
     if (userAgent.length > 0) {
         headers[@"User-Agent"] = userAgent;
     }
+    NSString *cookie = read_cookie_file(cookieFile);
+    if (cookie.length > 0) {
+        headers[@"Cookie"] = cookie;
+    }
     if (headers.count > 0) {
         options[@"AVURLAssetHTTPHeaderFieldsKey"] = headers;
     }
     if (mimeType.length > 0) {
         // B 站 CDN 给 .m4s 返回 text/plain，必须显式覆盖 MIME 才能解码
-        options[AVURLAssetOverrideMIMETypeKey] = mimeType;
+        options[@"AVURLAssetOverrideMIMETypeKey"] = mimeType;
     }
 
     AVURLAsset *asset = [AVURLAsset URLAssetWithURL:url options:options];
@@ -164,7 +184,7 @@ static int run_file_mode(NSString *path) {
 int main(int argc, const char * argv[]) {
     @autoreleasepool {
         if (argc < 2) {
-            fprintf(stderr, "usage: %s <audio-file>\n       %s --stream <url> <referer> <user-agent> [mime]\n",
+            fprintf(stderr, "usage: %s <audio-file>\n       %s --stream <url> <referer> <user-agent> [mime] [cookie-file]\n",
                     argv[0], argv[0]);
             return 2;
         }
@@ -173,14 +193,15 @@ int main(int argc, const char * argv[]) {
 
         if (strcmp(argv[1], "--stream") == 0) {
             if (argc < 5) {
-                fprintf(stderr, "usage: %s --stream <url> <referer> <user-agent> [mime]\n", argv[0]);
+                fprintf(stderr, "usage: %s --stream <url> <referer> <user-agent> [mime] [cookie-file]\n", argv[0]);
                 return 2;
             }
             NSString *url = [NSString stringWithUTF8String:argv[2]];
             NSString *referer = [NSString stringWithUTF8String:argv[3]];
             NSString *userAgent = [NSString stringWithUTF8String:argv[4]];
             NSString *mime = argc >= 6 ? [NSString stringWithUTF8String:argv[5]] : @"";
-            return run_stream_mode(url, referer, userAgent, mime);
+            NSString *cookieFile = argc >= 7 ? [NSString stringWithUTF8String:argv[6]] : @"";
+            return run_stream_mode(url, referer, userAgent, mime, cookieFile);
         }
 
         NSString *path = [NSString stringWithUTF8String:argv[1]];

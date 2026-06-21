@@ -105,3 +105,28 @@ def build_detail_lines(item: VideoItem, width: int) -> list[str]:
         "📝 简介:",
         *description_lines,
     ]
+
+
+def print_favorite_folders(folders: list[dict]) -> None:
+    """打印服务端收藏夹列表。"""
+    print("\nBilibili 收藏夹列表")
+    print("==================")
+    if not folders:
+        print("没有找到收藏夹（可能未登录或收藏夹为空）。")
+        return
+    for folder in folders:
+        fid = folder.get("id", "?")
+        title = folder.get("title", "未命名")
+        count = folder.get("media_count", 0)
+        print(f"  [{fid}] {title}  ({count} 个视频)")
+    print()
+
+
+def print_import_result(target: str, count: int) -> None:
+    """打印导入结果摘要。"""
+    labels = {
+        "favorites": "收藏夹",
+        "history": "浏览历史",
+    }
+    label = labels.get(target, target)
+    print(f"\n已替换{label}: {count} 个视频")

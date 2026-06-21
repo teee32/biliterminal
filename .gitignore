@@ -11,6 +11,7 @@ MT2.26.4.apk
 .venv/
 .pytest_cache/
 .biliterminal/
+.agents/
 :memory:
 build/
 *.egg-info/

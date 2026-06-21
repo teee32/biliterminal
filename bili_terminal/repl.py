@@ -15,7 +15,7 @@ from .models import (
     video_key_from_item,
     video_key_from_ref,
 )
-from .output import print_comments, print_favorites, print_history, print_video_detail, print_video_list
+from .output import print_comments, print_favorite_folders, print_favorites, print_history, print_import_result, print_video_detail, print_video_list
 
 
 def open_video_target(target: str) -> str:
@@ -30,7 +30,8 @@ class BilibiliCLI(cmd.Cmd):
         "Bilibili CLI 已启动。\n"
         "可用命令: hot [页码] [数量], search <关键词> [页码] [数量], "
         "video <BV号|av号|URL|序号>, audio <序号|BV号|URL|pause|resume|toggle|stop>, "
-        "favorite <序号|BV号|URL>, favorites [open|remove], open <序号|BV号|URL>, exit"
+        "favorite <序号|BV号|URL>, favorites [open|remove], open <序号|BV号|URL>, "
+        "login, exit"
     )
     prompt = "bili> "
 
@@ -171,6 +172,84 @@ class BilibiliCLI(cmd.Cmd):
 
     def do_exit(self, _: str) -> bool:
         return True
+
+    def do_login(self, _: str) -> None:
+        from .cli import run_login
+        run_login(self.client)
+
+    def do_import_favorites(self, arg: str) -> None:
+        """从 Bilibili 服务端导入收藏夹。用法: import_favorites [folder_id]"""
+        import time
+        parts = shlex.split(arg)
+        folder_id: int | None = int(parts[0]) if parts else None
+
+        try:
+            if folder_id is not None:
+                folders = [{"id": folder_id, "title": f"收藏夹 {folder_id}", "media_count": "?"}]
+            else:
+                folders = self.client.user_favorite_folders()
+                if not folders:
+                    print("服务端收藏夹为空或无法获取。")
+                    return
+                print_favorite_folders(folders)
+
+            all_items: list = []
+            for folder in folders:
+                fid = folder["id"]
+                title = folder.get("title", f"收藏夹 {fid}")
+                print(f"正在导入 [{fid}] {title}...", end="", flush=True)
+                page = 1
+                folder_items: list = []
+                while True:
+                    items, has_more = self.client.user_favorite_videos(fid, page=page, page_size=20)
+                    folder_items.extend(items)
+                    if not has_more:
+                        break
+                    page += 1
+                    time.sleep(0.5)
+                print(f" {len(folder_items)} 个视频")
+                all_items.extend(folder_items)
+
+            count = self.history_store.replace_favorites(all_items)
+            print_import_result("favorites", count)
+        except (BilibiliAPIError, ValueError) as exc:
+            print(f"导入收藏夹失败: {exc}")
+
+    def do_import_history(self, arg: str) -> None:
+        """从 Bilibili 服务端导入观看历史。用法: import_history [max]"""
+        import time
+        parts = shlex.split(arg)
+        max_items: int | None = int(parts[0]) if parts else None
+
+        try:
+            all_items: list = []
+            cursor: dict | None = {}
+            page = 0
+            while cursor is not None:
+                page += 1
+                print(f"\r正在获取观看历史 第 {page} 页...", end="", flush=True)
+                max_oid = str(cursor.get("max", "")) if isinstance(cursor, dict) else ""
+                view_at = int(cursor.get("view_at", 0)) if isinstance(cursor, dict) else 0
+                items, cursor = self.client.user_history(max_oid=max_oid, view_at=view_at, page_size=20)
+                all_items.extend(items)
+                if max_items is not None and len(all_items) >= max_items:
+                    all_items = all_items[:max_items]
+                    break
+                if cursor is not None:
+                    time.sleep(0.5)
+            print()
+            count = self.history_store.replace_history(all_items)
+            print_import_result("history", count)
+        except (BilibiliAPIError, ValueError) as exc:
+            print(f"\n导入观看历史失败: {exc}")
+
+    def do_favorite_folders(self, _: str) -> None:
+        """查看 Bilibili 服务端收藏夹列表。"""
+        try:
+            folders = self.client.user_favorite_folders()
+            print_favorite_folders(folders)
+        except BilibiliAPIError as exc:
+            print(f"获取收藏夹列表失败: {exc}")
 
     def do_quit(self, _: str) -> bool:
         return True

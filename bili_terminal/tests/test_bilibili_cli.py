@@ -1,6 +1,8 @@
+import base64
 import io
 import json
 import os
+import stat
 import sys
 import tempfile
 import unittest
@@ -8,6 +10,8 @@ from unittest import mock
 
 from bili_terminal import audio
 from bili_terminal import bilibili_cli as cli
+from bili_terminal import tui as tui_module
+from bili_terminal import video_player as vp
 
 
 class ParseVideoRefTests(unittest.TestCase):
@@ -269,6 +273,88 @@ class FormattingTests(unittest.TestCase):
         mock_clear.assert_called_once()
 
 
+class ClientCredentialsTests(unittest.TestCase):
+    def test_set_cookie_string(self) -> None:
+        client = cli.BilibiliClient()
+        client.cookie_jar.clear()
+        client._set_cookie_string("SESSDATA=my_session_data; bili_jct=csrf_token; DedeUserID=123456")
+        cookies = {c.name: c.value for c in client.cookie_jar}
+        self.assertEqual(cookies.get("SESSDATA"), "my_session_data")
+        self.assertEqual(cookies.get("bili_jct"), "csrf_token")
+        self.assertEqual(cookies.get("DedeUserID"), "123456")
+
+    def test_load_credentials_from_env_cookie(self) -> None:
+        with mock.patch.dict(os.environ, {"BILITERMINAL_COOKIE": "SESSDATA=env_cookie_data"}):
+            client = cli.BilibiliClient()
+            cookies = {c.name: c.value for c in client.cookie_jar}
+            self.assertEqual(cookies.get("SESSDATA"), "env_cookie_data")
+
+    def test_load_credentials_from_env_sessdata(self) -> None:
+        with mock.patch.dict(os.environ, {"BILITERMINAL_SESSDATA": "env_sessdata_only"}):
+            client = cli.BilibiliClient()
+            cookies = {c.name: c.value for c in client.cookie_jar}
+            self.assertEqual(cookies.get("SESSDATA"), "env_sessdata_only")
+
+    def test_load_credentials_from_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with mock.patch.dict(os.environ, {"BILITERMINAL_STATE_DIR": temp_dir}):
+                cred_path = os.path.join(temp_dir, "credentials.json")
+                with open(cred_path, "w", encoding="utf-8") as f:
+                    json.dump({"cookie": "SESSDATA=file_cookie_data"}, f)
+                client = cli.BilibiliClient()
+                cookies = {c.name: c.value for c in client.cookie_jar}
+                self.assertEqual(cookies.get("SESSDATA"), "file_cookie_data")
+
+    def test_save_session(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with mock.patch.dict(os.environ, {"BILITERMINAL_STATE_DIR": temp_dir}):
+                client = cli.BilibiliClient()
+                client.cookie_jar.clear()
+                client._set_cookie_string("SESSDATA=save_test_sessdata; bili_jct=save_test_csrf")
+                client.save_session()
+
+                cred_path = os.path.join(temp_dir, "credentials.json")
+                self.assertTrue(os.path.exists(cred_path))
+                with open(cred_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                self.assertIn("SESSDATA=save_test_sessdata", data.get("cookie", ""))
+                self.assertEqual(data.get("SESSDATA"), "save_test_sessdata")
+                self.assertEqual(stat.S_IMODE(os.stat(cred_path).st_mode), 0o600)
+
+    def test_login_page_html_does_not_send_token_to_third_party_qr_service(self) -> None:
+        html = cli.build_login_page_html("https://passport.example/login?q=secret&x=<tag>")
+        self.assertNotIn("api.qrserver.com", html)
+        self.assertNotIn("create-qr-code", html)
+        self.assertIn("data:image/svg+xml;base64,", html)
+        self.assertIn("https://passport.example/login?q=secret&amp;x=&lt;tag&gt;", html)
+
+    def test_local_qr_data_uri_contains_standalone_svg(self) -> None:
+        data_uri = cli.qr_svg_data_uri("https://passport.example/login?q=secret")
+        self.assertTrue(data_uri.startswith("data:image/svg+xml;base64,"))
+        svg = base64.b64decode(data_uri.split(",", 1)[1]).decode("utf-8")
+        self.assertIn("<svg", svg)
+        self.assertIn("<rect", svg)
+        self.assertNotIn("passport.example", svg)
+
+    def test_local_qr_generator_handles_long_login_urls(self) -> None:
+        matrix = cli.qr_matrix("https://passport.example/login?" + ("token=abcdef&" * 30))
+        self.assertEqual(len(matrix), len(matrix[0]))
+        self.assertGreaterEqual(len(matrix), 21)
+
+    def test_user_id_falls_back_to_nav_with_sessdata_only(self) -> None:
+        client = cli.BilibiliClient()
+        client.cookie_jar.clear()
+        client._set_cookie_string("SESSDATA=env_sessdata_only")
+        client._request_json = mock.MagicMock(return_value={"isLogin": True, "mid": 123456})
+
+        self.assertEqual(client._get_user_id(), "123456")
+        client._request_json.assert_called_once_with(
+            "https://api.bilibili.com/x/web-interface/nav",
+            {},
+            "https://www.bilibili.com/",
+        )
+
+
 class ClientTests(unittest.TestCase):
     def make_response(self, payload: dict) -> mock.MagicMock:
         response = mock.MagicMock()
@@ -368,6 +454,38 @@ class ClientTests(unittest.TestCase):
             }
         )
         self.assertEqual(cli.BilibiliClient().trending_keywords(2), ["原神", "中文"])
+
+    @mock.patch.object(cli.BilibiliClient, "_open")
+    def test_user_favorite_videos_uses_publish_time_not_favorite_time(self, mock_open: mock.MagicMock) -> None:
+        mock_open.return_value = self.make_response(
+            {
+                "code": 0,
+                "data": {
+                    "medias": [
+                        {
+                            "title": "收藏视频",
+                            "upper": {"name": "UP"},
+                            "bvid": "BV1xx411c7mu",
+                            "aid": 106,
+                            "duration": 99,
+                            "cnt_info": {"play": 10, "danmaku": 2, "collect": 5},
+                            "pubtime": 1710000000,
+                            "fav_time": 1810000000,
+                            "intro": "简介",
+                            "link": "https://www.bilibili.com/video/BV1xx411c7mu",
+                        }
+                    ],
+                    "has_more": False,
+                },
+            }
+        )
+
+        items, has_more = cli.BilibiliClient().user_favorite_videos(10)
+
+        self.assertFalse(has_more)
+        self.assertEqual(items[0].title, "收藏视频")
+        self.assertEqual(items[0].pubdate, 1710000000)
+        self.assertEqual(items[0].favorite, 5)
 
     @mock.patch.object(cli.BilibiliClient, "_open")
     def test_comments_extracts_reply_items(self, mock_open: mock.MagicMock) -> None:
@@ -515,6 +633,72 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(stream.url, "https://example.com/audio.m4s")
         self.assertEqual(stream.referer, item.url)
 
+    def test_extract_video_stream_prefers_avc_backup_url(self) -> None:
+        stream = cli.extract_video_stream(
+            {
+                "data": {
+                    "dash": {
+                        "video": [
+                            {
+                                "bandwidth": 200000,
+                                "baseUrl": "https://example.com/av1.m4s",
+                                "codecs": "av01.0.08M.08",
+                                "width": 1920,
+                                "height": 1080,
+                            },
+                            {
+                                "bandwidth": 100000,
+                                "backupUrl": ["https://example.com/avc-backup.m4s"],
+                                "codecs": "avc1.640028",
+                                "width": 1280,
+                                "height": 720,
+                            },
+                        ]
+                    }
+                }
+            },
+            referer="https://www.bilibili.com/video/BV1xx411c7mu",
+            user_agent="UA",
+            cookie_header="SESSDATA=abc",
+        )
+        self.assertEqual(stream.url, "https://example.com/avc-backup.m4s")
+        self.assertEqual(stream.codec, "avc1.640028")
+        self.assertEqual(stream.cookie_header, "SESSDATA=abc")
+
+    def test_video_stream_for_item_uses_canonical_referer_and_cookie(self) -> None:
+        client = cli.BilibiliClient()
+        client._set_cookie_string("SESSDATA=abc")
+        client._request_text = mock.MagicMock(
+            return_value=(
+                '<script>window.__playinfo__={"data":{"dash":{"video":[{'
+                '"bandwidth":96000,"baseUrl":"https://example.com/video.m4s",'
+                '"codecs":"avc1.640028","width":640,"height":360'
+                '}]}}}</script>'
+            )
+        )
+        item = cli.VideoItem(
+            title="收藏视频",
+            author="UP",
+            bvid="BV1xx411c7mu",
+            aid=106,
+            duration="1:00",
+            play=1,
+            danmaku=2,
+            like=3,
+            favorite=4,
+            pubdate=1710000000,
+            description="简介",
+            url="bilibili://video/BV1xx411c7mu",
+            raw={},
+        )
+        stream = client.video_stream_for_item(item)
+        self.assertEqual(stream.referer, "https://www.bilibili.com/video/BV1xx411c7mu")
+        self.assertIn("SESSDATA=abc", stream.cookie_header)
+        client._request_text.assert_called_once_with(
+            "https://www.bilibili.com/video/BV1xx411c7mu",
+            "https://www.bilibili.com/",
+        )
+
     @mock.patch.object(audio, "clear_audio_playback_state")
     @mock.patch.object(audio, "pid_exists", side_effect=[True, False])
     @mock.patch.object(audio, "wait_for_audio_exit")
@@ -657,6 +841,67 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(saved_state.pid, os.getpid())
         self.assertEqual(saved_state.control_pid, helper_process.pid)
 
+    def test_private_text_file_is_read_once_and_0600(self) -> None:
+        path = cli.write_private_text_file("biliterminal-test-cookie-", "SESSDATA=secret")
+        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
+        self.assertEqual(cli.read_private_text_once(path), "SESSDATA=secret")
+        self.assertFalse(os.path.exists(path))
+
+    @mock.patch.object(audio.subprocess, "Popen")
+    def test_spawn_audio_worker_passes_cookie_file_not_cookie_value(self, mock_popen: mock.MagicMock) -> None:
+        process = mock.MagicMock()
+        process.pid = 1234
+        mock_popen.return_value = process
+        stream = cli.AudioStream(
+            title="标题",
+            url="https://example.com/audio.m4s",
+            referer="https://www.bilibili.com/video/BV1",
+            user_agent="UA",
+            source_kind="dash-audio",
+            cookie_header="SESSDATA=secret",
+        )
+        pid = cli.spawn_audio_worker(stream, "BV1xx411c7mu")
+        self.assertEqual(pid, 1234)
+        command = mock_popen.call_args.args[0]
+        joined = " ".join(command)
+        self.assertIn("--cookie-file", command)
+        self.assertNotIn("SESSDATA=secret", joined)
+        cookie_path = command[command.index("--cookie-file") + 1]
+        try:
+            self.assertEqual(stat.S_IMODE(os.stat(cookie_path).st_mode), 0o600)
+            self.assertEqual(cli.read_private_text_once(cookie_path), "SESSDATA=secret")
+        finally:
+            if os.path.exists(cookie_path):
+                os.unlink(cookie_path)
+
+    @mock.patch.object(audio, "save_audio_playback_state")
+    @mock.patch.object(audio, "write_private_text_file", return_value="/tmp/biliterminal-cookie-file")
+    @mock.patch.object(audio.subprocess, "Popen")
+    def test_macos_native_helper_receives_cookie_file_path_not_cookie_value(
+        self,
+        mock_popen: mock.MagicMock,
+        mock_cookie_file: mock.MagicMock,
+        _mock_save: mock.MagicMock,
+    ) -> None:
+        helper_process = mock.MagicMock()
+        helper_process.pid = 9988
+        helper_process.wait.return_value = 0
+        mock_popen.return_value = helper_process
+        stream = cli.AudioStream(
+            title="标题",
+            url="https://example.com/audio.m4s",
+            referer="https://www.bilibili.com/video/BV1",
+            user_agent="UA",
+            source_kind="dash-audio",
+            cookie_header="SESSDATA=secret",
+        )
+        result = audio._run_macos_stream_worker(stream, "BV1xx411c7mu", "/tmp/biliterminal-audio-helper")
+        self.assertEqual(result, 0)
+        mock_cookie_file.assert_called_once_with("biliterminal-helper-cookie-", "SESSDATA=secret")
+        command = mock_popen.call_args.args[0]
+        self.assertEqual(command[-1], "/tmp/biliterminal-cookie-file")
+        self.assertNotIn("SESSDATA=secret", " ".join(command))
+
     @mock.patch.object(audio, "cleanup_audio_media_path")
     @mock.patch.object(audio, "save_audio_playback_state")
     @mock.patch.object(audio, "load_audio_playback_state")
@@ -776,6 +1021,74 @@ class ClientTests(unittest.TestCase):
         mock_signal.assert_called_once_with(8765, cli.signal.SIGSTOP)
         self.assertTrue(state.paused)
         mock_save.assert_called_once_with(state)
+
+
+class VideoPlayerTests(unittest.TestCase):
+    def make_stream(self, cookie_header: str = "") -> cli.VideoStream:
+        return cli.VideoStream(
+            url="https://example.com/video.m4s",
+            referer="https://www.bilibili.com/video/BV1xx411c7mu",
+            user_agent="UA",
+            width=640,
+            height=360,
+            frame_rate="30",
+            codec="avc1",
+            bandwidth=100000,
+            source_kind="dash-video",
+            cookie_header=cookie_header,
+        )
+
+    def test_ffmpeg_command_uses_stdin_for_cookie_stream(self) -> None:
+        command = vp._build_ffmpeg_command(self.make_stream("SESSDATA=secret"), 40, 12, fps=8)
+        joined = " ".join(command)
+        self.assertIn("pipe:0", command)
+        self.assertNotIn("https://example.com/video.m4s", joined)
+        self.assertNotIn("SESSDATA=secret", joined)
+        self.assertNotIn("-headers", command)
+
+    def test_ffmpeg_command_uses_stdin_even_without_cookie(self) -> None:
+        # Bilibili CDN URL は署名トークン入りなので、未ログイン時でも
+        # ffmpeg の argv (= `ps` から見える) に出さず、StreamFeeder 経由で投入する
+        command = vp._build_ffmpeg_command(self.make_stream(), 40, 12, fps=8)
+        joined = " ".join(command)
+        self.assertIn("pipe:0", command)
+        self.assertNotIn("-headers", command)
+        self.assertNotIn("https://example.com/video.m4s", joined)
+
+    def test_stop_wakes_paused_process_and_closes_stderr(self) -> None:
+        class FakeProcess:
+            def __init__(self) -> None:
+                self.signals: list[int] = []
+                self.returncode = None
+
+            def poll(self) -> int | None:
+                return None
+
+            def send_signal(self, sig: int) -> None:
+                self.signals.append(sig)
+
+            def wait(self, timeout: float | None = None) -> int:
+                self.returncode = -15
+                return self.returncode
+
+            def kill(self) -> None:
+                self.signals.append(cli.signal.SIGKILL)
+
+        process = FakeProcess()
+        player = vp.VideoPlayer(self.make_stream(), 40, 12, fps=8)
+        player._process = process
+        player._paused = True
+        stderr_handle = mock.MagicMock()
+        player._stderr_handle = stderr_handle
+        player.stop()
+        self.assertEqual(process.signals[:2], [cli.signal.SIGCONT, cli.signal.SIGTERM])
+        stderr_handle.close.assert_called_once()
+        self.assertIsNone(player._stderr_handle)
+
+    def test_render_frame_rejects_short_frame(self) -> None:
+        with self.assertRaises(ValueError):
+            vp.render_frame(b"\xff\xff", 1, 1)
+        self.assertEqual(vp.render_frame(b"", 0, 1), "")
 
 
 class ShellTests(unittest.TestCase):
@@ -1015,6 +1328,22 @@ class HistoryStoreTests(unittest.TestCase):
             self.assertFalse(store.toggle_favorite(item))
             self.assertFalse(store.is_favorite(item))
 
+    def test_replace_favorites_persists_all_synced_items_beyond_local_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = f"{temp_dir}/history.json"
+            items = [
+                self.make_item(f"收藏视频 {index}", f"BV1xx411c7m{index}")
+                for index in range(3)
+            ]
+            store = cli.HistoryStore(path=path, max_favorites=2)
+            self.assertEqual(store.replace_favorites(items), 3)
+
+            reloaded = cli.HistoryStore(path=path, max_favorites=2)
+            self.assertEqual(
+                [item.title for item in reloaded.get_favorite_videos()],
+                ["收藏视频 0", "收藏视频 1", "收藏视频 2"],
+            )
+
 
 class TUIStateTests(unittest.TestCase):
     def make_item(self, title: str = "标题", bvid: str = "BV1xx411c7mu") -> cli.VideoItem:
@@ -1098,6 +1427,41 @@ class TUIStateTests(unittest.TestCase):
             self.assertIn(("init_pair", 1, 13, -1), fake_curses.calls)
             self.assertIn(("init_pair", 4, 13, -1), fake_curses.calls)
             self.assertTrue(tui.use_colors)
+
+    def test_run_shortens_curses_escape_delay(self) -> None:
+        class FakeCurses:
+            KEY_RESIZE = 410
+            error = RuntimeError
+
+            def __init__(self) -> None:
+                self.escdelay: int | None = None
+
+            def set_escdelay(self, delay_ms: int) -> None:
+                self.escdelay = delay_ms
+
+            def curs_set(self, _visibility: int) -> None:
+                return None
+
+        class FakeScreen:
+            def keypad(self, _enabled: bool) -> None:
+                return None
+
+            def timeout(self, _delay: int) -> None:
+                return None
+
+            def getch(self) -> int:
+                return ord("q")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fake_curses = FakeCurses()
+            store = cli.HistoryStore(path=f"{temp_dir}/history.json")
+            tui = cli.BilibiliTUI(cli.BilibiliClient(), store)
+            tui.init_theme = mock.MagicMock()
+            tui.start_load_items = mock.MagicMock()
+            tui.draw = mock.MagicMock()
+            with mock.patch.dict(sys.modules, {"curses": fake_curses}):
+                tui.run(FakeScreen())
+            self.assertEqual(fake_curses.escdelay, tui_module.ESCDELAY_MS)
 
     def test_load_items_uses_home_recommend_channel(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1184,6 +1548,27 @@ class TUIStateTests(unittest.TestCase):
             tui.ensure_comments_for_selected.assert_called_once_with(force=True)
             self.assertIn("评论加载失败", tui.status)
 
+    def test_async_comment_load_preserves_worker_error_message(self) -> None:
+        class FailingClient(cli.BilibiliClient):
+            def comments(self, *_args, **_kwargs):
+                raise cli.BilibiliAPIError("boom")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = cli.HistoryStore(path=f"{temp_dir}/history.json")
+            tui = cli.BilibiliTUI(FailingClient(), store)
+            item = self.make_item()
+            tui.items = [item]
+            tui._start_comment_load(force=True, announce=True)
+            import time
+            deadline = time.time() + 2
+            while tui._jobs.empty() and time.time() < deadline:
+                time.sleep(0.01)
+            tui._drain_jobs()
+            key = item.bvid or str(item.aid)
+            self.assertEqual(tui.comment_errors[key], "boom")
+            self.assertIn("boom", tui.status)
+            self.assertNotIn("free variable", tui.status)
+
     def test_toggle_selected_favorite_adds_item(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             store = cli.HistoryStore(path=f"{temp_dir}/history.json")
@@ -1251,6 +1636,167 @@ class TUIStateTests(unittest.TestCase):
             tui.stop_audio()
             mock_stop_audio.assert_called_once()
             self.assertEqual(tui.status, "已停止音频: 标题")
+
+    def test_video_stream_failure_returns_to_tui_and_preserves_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = cli.HistoryStore(path=f"{temp_dir}/history.json")
+            tui = cli.BilibiliTUI(cli.BilibiliClient(), store)
+            tui.items = [self.make_item()]
+            tui._submit = lambda work, apply, status=None: apply(work())
+            tui.client.video_stream_for_item = mock.MagicMock(side_effect=cli.BilibiliAPIError("boom"))
+            with mock.patch.object(vp, "has_ffmpeg", return_value=True), mock.patch("sys.stdout", new=io.StringIO()):
+                tui.enter_video_mode()
+            self.assertFalse(tui.video_mode)
+            self.assertEqual(tui._video_state, "failed")
+            self.assertIn("boom", tui.status)
+
+    @mock.patch.object(audio, "play_audio_for_item", side_effect=cli.BilibiliAPIError("audio fail"))
+    def test_video_audio_start_failure_does_not_crash_or_exit_video(self, _mock_audio: mock.MagicMock) -> None:
+        class FakePlayer:
+            def start(self) -> None:
+                return None
+
+            def stop(self) -> None:
+                return None
+
+        stream = cli.VideoStream(
+            url="https://example.com/video.m4s",
+            referer="https://www.bilibili.com/video/BV1xx411c7mu",
+            user_agent="UA",
+            width=640,
+            height=360,
+            frame_rate="30",
+            codec="avc1",
+            bandwidth=100000,
+            source_kind="dash-video",
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = cli.HistoryStore(path=f"{temp_dir}/history.json")
+            tui = cli.BilibiliTUI(cli.BilibiliClient(), store)
+            tui.items = [self.make_item()]
+            tui._submit = lambda work, apply, status=None: apply(work())
+            tui.client.video_stream_for_item = mock.MagicMock(return_value=stream)
+            with mock.patch.object(vp, "has_ffmpeg", return_value=True), mock.patch.object(vp, "VideoPlayer", return_value=FakePlayer()):
+                tui.enter_video_mode()
+            self.assertTrue(tui.video_mode)
+            self.assertEqual(tui._video_state, "playing")
+            self.assertFalse(tui._video_started_audio)
+            self.assertIn("音频启动失败", tui.status)
+
+    @mock.patch.object(audio, "stop_audio_playback")
+    def test_video_q_returns_to_tui_without_exiting_app(self, mock_stop: mock.MagicMock) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = cli.HistoryStore(path=f"{temp_dir}/history.json")
+            tui = cli.BilibiliTUI(cli.BilibiliClient(), store)
+            tui.video_mode = True
+            tui._video_started_audio = True
+            tui._video_player = mock.MagicMock()
+            with mock.patch("sys.stdout", new=io.StringIO()):
+                should_exit = tui.handle_video_key(ord("q"))
+            self.assertFalse(should_exit)
+            self.assertFalse(tui.video_mode)
+            mock_stop.assert_called_once_with(silent=True)
+
+    @mock.patch.object(audio, "stop_audio_playback")
+    def test_video_esc_returns_to_tui_and_requests_full_redraw(self, mock_stop: mock.MagicMock) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = cli.HistoryStore(path=f"{temp_dir}/history.json")
+            tui = cli.BilibiliTUI(cli.BilibiliClient(), store)
+            tui.video_mode = True
+            tui._video_started_audio = True
+            tui._video_player = mock.MagicMock()
+            stdout = io.StringIO()
+            with mock.patch("sys.stdout", new=stdout):
+                should_exit = tui.handle_video_key(27)
+            self.assertFalse(should_exit)
+            self.assertFalse(tui.video_mode)
+            self.assertTrue(tui._force_full_redraw)
+            self.assertIn("\x1b(B\x1b[2J\x1b[H", stdout.getvalue())
+            mock_stop.assert_called_once_with(silent=True)
+
+    @mock.patch.object(audio, "stop_audio_playback")
+    def test_video_x_stops_and_returns_to_tui(self, mock_stop: mock.MagicMock) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = cli.HistoryStore(path=f"{temp_dir}/history.json")
+            tui = cli.BilibiliTUI(cli.BilibiliClient(), store)
+            tui.video_mode = True
+            tui._video_started_audio = True
+            tui._video_player = mock.MagicMock()
+            with mock.patch("sys.stdout", new=io.StringIO()):
+                tui.handle_video_key(ord("x"))
+            self.assertFalse(tui.video_mode)
+            self.assertEqual(tui.status, "已停止播放")
+            mock_stop.assert_called_once_with(silent=True)
+
+    @mock.patch.object(audio, "pause_audio_playback", return_value="已暂停音频: 标题")
+    def test_video_space_pauses_video_and_audio(self, mock_pause: mock.MagicMock) -> None:
+        player = mock.MagicMock()
+        player.toggle_pause.return_value = False
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = cli.HistoryStore(path=f"{temp_dir}/history.json")
+            tui = cli.BilibiliTUI(cli.BilibiliClient(), store)
+            tui.video_mode = True
+            tui._video_started_audio = True
+            tui._video_player = player
+            tui.handle_video_key(ord(" "))
+            mock_pause.assert_called_once()
+            self.assertEqual(tui._video_state, "paused")
+            self.assertEqual(tui.status, "已暂停")
+
+    @mock.patch.object(audio, "stop_audio_playback")
+    def test_video_natural_end_cleans_up_once(self, mock_stop: mock.MagicMock) -> None:
+        class FakePlayer:
+            def __init__(self) -> None:
+                self.stop_count = 0
+
+            def get_frame(self) -> str:
+                return "@"
+
+            def is_alive(self) -> bool:
+                return False
+
+            def stop(self) -> None:
+                self.stop_count += 1
+
+        player = FakePlayer()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = cli.HistoryStore(path=f"{temp_dir}/history.json")
+            tui = cli.BilibiliTUI(cli.BilibiliClient(), store)
+            tui.video_mode = True
+            tui._video_state = "playing"
+            tui._video_started_audio = True
+            tui._video_player = player
+            with mock.patch("sys.stdout", new=io.StringIO()):
+                tui._tick()
+                tui._tick()
+            self.assertFalse(tui.video_mode)
+            self.assertEqual(player.stop_count, 1)
+            mock_stop.assert_called_once_with(silent=True)
+
+    @mock.patch.object(audio, "stop_audio_playback")
+    def test_video_process_exit_before_first_frame_returns_to_tui(self, mock_stop: mock.MagicMock) -> None:
+        class FakePlayer:
+            def get_frame(self) -> None:
+                return None
+
+            def is_alive(self) -> bool:
+                return False
+
+            def stop(self) -> None:
+                return None
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = cli.HistoryStore(path=f"{temp_dir}/history.json")
+            tui = cli.BilibiliTUI(cli.BilibiliClient(), store)
+            tui.video_mode = True
+            tui._video_state = "playing"
+            tui._video_started_audio = True
+            tui._video_player = FakePlayer()
+            with mock.patch("sys.stdout", new=io.StringIO()):
+                tui._tick()
+            self.assertFalse(tui.video_mode)
+            self.assertIn("视频播放失败", tui.status)
+            mock_stop.assert_called_once_with(silent=True)
 
     def test_mode_token_uses_favorites_label(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1332,6 +1878,97 @@ class TUIStateTests(unittest.TestCase):
                 tui.draw(FakeScreen())
             tui.draw_favorites_view.assert_called_once()
             tui.draw_split_view.assert_not_called()
+
+    def test_draw_favorites_mode_renders_sync_shortcut_hint(self) -> None:
+        import curses
+
+        class FakeScreen:
+            def __init__(self) -> None:
+                self.lines: list[str] = []
+
+            def erase(self) -> None:
+                return None
+
+            def getmaxyx(self) -> tuple[int, int]:
+                return (32, 160)
+
+            def addnstr(self, _y: int, _x: int, text: str, *_args) -> None:
+                self.lines.append(text)
+
+            def hline(self, *_args, **_kwargs) -> None:
+                return None
+
+            def refresh(self) -> None:
+                return None
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = cli.HistoryStore(path=f"{temp_dir}/history.json")
+            tui = cli.BilibiliTUI(cli.BilibiliClient(), store)
+            tui.mode = "favorites"
+            tui.draw_favorites_view = mock.MagicMock()
+            with mock.patch.object(curses, "ACS_HLINE", "-", create=True):
+                fake = FakeScreen()
+                tui.draw(fake)
+            rendered = " ".join(fake.lines)
+            self.assertIn("y 同步", rendered)
+
+    def test_draw_tab_row_favorites_mode_renders_sync_hint(self) -> None:
+        class FakeScreen:
+            def __init__(self) -> None:
+                self.lines: list[str] = []
+
+            def addnstr(self, _y: int, _x: int, text: str, *_args) -> None:
+                self.lines.append(text)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = cli.HistoryStore(path=f"{temp_dir}/history.json")
+            tui = cli.BilibiliTUI(cli.BilibiliClient(), store)
+            tui.mode = "favorites"
+            fake = FakeScreen()
+            tui._draw_tab_row(fake, 0, 120)
+            rendered = " ".join(fake.lines)
+            self.assertIn("y 同步", rendered)
+
+    def test_draw_after_video_exit_forces_curses_full_repaint(self) -> None:
+        import curses
+
+        class FakeScreen:
+            def __init__(self) -> None:
+                self.calls: list[tuple[object, ...]] = []
+
+            def clearok(self, enabled: bool) -> None:
+                self.calls.append(("clearok", enabled))
+
+            def clear(self) -> None:
+                self.calls.append(("clear",))
+
+            def erase(self) -> None:
+                self.calls.append(("erase",))
+
+            def getmaxyx(self) -> tuple[int, int]:
+                return (32, 120)
+
+            def addnstr(self, *_args, **_kwargs) -> None:
+                return None
+
+            def hline(self, *_args, **_kwargs) -> None:
+                return None
+
+            def refresh(self) -> None:
+                return None
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = cli.HistoryStore(path=f"{temp_dir}/history.json")
+            tui = cli.BilibiliTUI(cli.BilibiliClient(), store)
+            tui.draw_split_view = mock.MagicMock()
+            tui._force_full_redraw = True
+            fake = FakeScreen()
+            with mock.patch.object(curses, "ACS_HLINE", "-", create=True):
+                tui.draw(fake)
+            self.assertIn(("clearok", True), fake.calls)
+            self.assertIn(("clear",), fake.calls)
+            self.assertNotIn(("erase",), fake.calls)
+            self.assertFalse(tui._force_full_redraw)
 
     def test_draw_favorites_list_renders_empty_hint(self) -> None:
         import curses

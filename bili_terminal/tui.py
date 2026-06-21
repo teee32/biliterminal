@@ -7,6 +7,7 @@ import webbrowser
 from typing import Any, Callable
 
 from . import audio
+from . import video_player as vp
 from .client import BilibiliClient
 from .history import HistoryStore
 from .models import BilibiliAPIError, CommentItem, ListState, VideoItem
@@ -22,6 +23,7 @@ from .textutil import (
 
 BILIBILI_PINK_RGB = (984, 447, 600)
 TICK_MS = 100
+ESCDELAY_MS = 25
 STATUS_TTL_TICKS = 120
 COMMENT_DEBOUNCE_TICKS = 4
 SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
@@ -80,6 +82,14 @@ class BilibiliTUI:
         self._dirty = True
         self._audio_state = None
         self._audio_poll = 0
+        # ── 视频播放 ──
+        self.video_mode = False
+        self._video_player: Any = None  # vp.VideoPlayer | None
+        self._video_frame: str = ""
+        self._video_detail_item: VideoItem | None = None  # 进入视频模式时的视频
+        self._video_state = "idle"
+        self._video_started_audio = False
+        self._force_full_redraw = False
 
     # ---------- async plumbing ----------
 
@@ -110,7 +120,10 @@ class BilibiliTUI:
             if exc is not None:
                 self.set_status(f"错误: {exc}", sticky=True)
                 continue
-            apply(result)
+            try:
+                apply(result)
+            except Exception as apply_exc:  # noqa: BLE001 — apply 在主循环中执行，不能让它炸穿 TUI
+                self.set_status(f"错误: {apply_exc}", sticky=True)
 
     def set_status(self, message: str, *, sticky: bool = False) -> None:
         self.status = message
@@ -141,6 +154,16 @@ class BilibiliTUI:
             current = (self._audio_state.title, self._audio_state.paused) if self._audio_state else None
             if previous != current:
                 self._dirty = True
+        # 视频模式下轮询新帧
+        if self.video_mode and self._video_player is not None:
+            frame = self._video_player.get_frame()
+            if frame is not None:
+                self._video_frame = frame
+                self._dirty = True
+            # 检测 ffmpeg 是否异常退出；即使一帧都没出来，也不能把用户困在视频模式。
+            if not self._video_player.is_alive():
+                message = "视频播放结束" if self._video_frame else "视频播放失败，详见视频日志"
+                self._finish_video_playback(message)
 
     def _schedule_comment_load(self, *, immediate: bool = False) -> None:
         self._comment_delay = 0 if immediate else COMMENT_DEBOUNCE_TICKS
@@ -188,14 +211,15 @@ class BilibiliTUI:
             try:
                 result = work()
             except Exception as exc:  # noqa: BLE001 — 线程内必须兜底，否则 _comment_inflight 泄漏
+                error_message = str(exc)
                 def apply_error(_: Any) -> None:
                     self._comment_inflight.discard(key)
                     self.comment_cache[key] = []
                     self.comment_loaded.discard(key)
-                    self.comment_errors[key] = str(exc)
+                    self.comment_errors[key] = error_message
                     self._detail_lines_cache = None
                     if announce:
-                        self.set_status(f"评论加载失败: {exc}", sticky=True)
+                        self.set_status(f"评论加载失败: {error_message}", sticky=True)
                 self._jobs.put((apply_error, None, None))
                 return
             self._jobs.put((apply, result, None))
@@ -678,6 +702,64 @@ class BilibiliTUI:
         self.set_status(audio.stop_audio_playback())
         self._refresh_audio_state()
 
+    # ── 服务端同步 ──
+
+    def _sync_current_mode_async(self) -> None:
+        """根据当前模式触发服务端同步。"""
+        if self.mode == "favorites":
+            self._sync_favorites_async()
+        elif self.mode == "history":
+            self._sync_history_async()
+        else:
+            self.set_status("当前模式不支持同步，请在收藏夹(m)或历史(v)视图中使用")
+
+    def _sync_favorites_async(self) -> None:
+        """异步从 Bilibili 服务端同步收藏夹。"""
+        import time
+
+        def work() -> int:
+            all_items: list[VideoItem] = []
+            folders = self.client.user_favorite_folders()
+            for folder in folders:
+                fid = folder["id"]
+                page = 1
+                while True:
+                    items, has_more = self.client.user_favorite_videos(fid, page=page, page_size=20)
+                    all_items.extend(items)
+                    if not has_more:
+                        break
+                    page += 1
+                    time.sleep(0.5)
+            return self.history_store.replace_favorites(all_items)
+
+        def apply(count: int) -> None:
+            self.set_status(f"收藏夹同步完成: {count} 个视频")
+            self.switch_mode("favorites")
+
+        self._submit(work, apply, "正在从 Bilibili 同步收藏夹...")
+
+    def _sync_history_async(self) -> None:
+        """异步从 Bilibili 服务端同步观看历史。"""
+        import time
+
+        def work() -> int:
+            all_items: list[VideoItem] = []
+            cursor: dict | None = {}
+            while cursor is not None:
+                max_oid = str(cursor.get("max", "")) if isinstance(cursor, dict) else ""
+                view_at = int(cursor.get("view_at", 0)) if isinstance(cursor, dict) else 0
+                items, cursor = self.client.user_history(max_oid=max_oid, view_at=view_at, page_size=20)
+                all_items.extend(items)
+                if cursor is not None:
+                    time.sleep(0.5)
+            return self.history_store.replace_history(all_items)
+
+        def apply(count: int) -> None:
+            self.set_status(f"历史记录同步完成: {count} 个视频")
+            self.switch_mode("history")
+
+        self._submit(work, apply, "正在从 Bilibili 同步观看历史...")
+
     def open_selected(self) -> None:
         item = self.selected_item
         if item is None:
@@ -834,6 +916,7 @@ class BilibiliTUI:
             "h              切回首页流",
             "v              查看历史",
             "m              查看收藏夹",
+            "y              在收藏夹/历史视图中同步 Bilibili 服务端数据",
             "n / p          下一页 / 上一页",
             "d              使用默认搜索词搜索",
             "r              刷新当前页",
@@ -844,7 +927,7 @@ class BilibiliTUI:
             "Esc / b        返回列表",
             "",
             "╌╌ 通用 ╌╌",
-            "f 收藏  a 播放/暂停音频  x 停止音频",
+            "V 播放 ASCII 视频  f 收藏  a 播放/暂停音频  x 停止音频",
             "o 浏览器打开  c 加载评论  ? 帮助  q 退出",
             "",
             f"最近搜索: {', '.join(self.history_store.get_recent_keywords(3)) or '无'}",
@@ -1341,7 +1424,7 @@ class BilibiliTUI:
             hint = f"当前搜索：{truncate_display(self.keyword, max(10, width // 4))}"
             hint_attr = self.attr("muted")
         elif self.mode == "favorites":
-            hint = "a 播放/暂停 ⋅ x 停止 ⋅ o 打开"
+            hint = "y 同步 ⋅ a 播放/暂停 ⋅ x 停止 ⋅ o 打开"
             hint_attr = self.attr("muted")
         else:
             hint = "Tab 切换分区 ⋅ / 搜索 ⋅ ? 帮助"
@@ -1434,16 +1517,88 @@ class BilibiliTUI:
         footer = f"⇕ {self.detail_scroll + 1}-{self.detail_scroll + len(visible_lines)} / {len(detail_lines)}"
         stdscr.addnstr(content_top + content_height - 2, 2, footer, width - 4, self.attr("muted"))
 
+    def draw_video_view(self, stdscr: Any, height: int, width: int) -> None:
+        """绘制全屏 ASCII 视频视图。
+
+        清屏后全屏居中渲染 ASCII 字符画帧，零 chrome。
+        帧通过 sys.stdout 直写终端（绕过 curses）。
+        """
+        import sys
+
+        out = sys.stdout
+
+        if not self._video_frame:
+            out.write("\x1b[2J")
+            if self._video_state == "loading" or self._video_player is not None:
+                msg = "正在加载视频流..."
+            else:
+                msg = "无法播放视频（缺少 ffmpeg 或视频流不可用）"
+            out.write(f"\x1b[{height // 2 + 1};{(width - len(msg)) // 2 + 1}H{msg}")
+            out.flush()
+            return
+
+        lines = self._video_frame.split("\n")
+        v_rows = len(lines)
+        v_cols = len(lines[0]) if lines else 0
+
+        # 居中
+        y_off = max(0, (height - v_rows) // 2)
+        x_off = max(0, (width - v_cols) // 2)
+
+        # 清屏后逐行写入 ASCII 帧
+        out.write("\x1b[2J")
+        for i, line in enumerate(lines):
+            if i >= height:
+                break
+            out.write(f"\x1b[{y_off + i + 1};{x_off + 1}H{line}")
+        out.flush()
+
+    def _prepare_screen_for_redraw(self, stdscr: Any) -> bool:
+        import curses
+
+        if not self._force_full_redraw:
+            stdscr.erase()
+            return False
+        self._force_full_redraw = False
+        try:
+            stdscr.clearok(True)
+        except (AttributeError, curses.error):
+            pass
+        try:
+            stdscr.clear()
+        except (AttributeError, curses.error):
+            stdscr.erase()
+        return True
+
+    def _finish_forced_redraw(self, stdscr: Any) -> None:
+        import curses
+
+        try:
+            stdscr.clearok(False)
+        except (AttributeError, curses.error):
+            pass
+
     def draw(self, stdscr: Any) -> None:
         import curses
 
-        stdscr.erase()
         height, width = stdscr.getmaxyx()
         if height < 12 or width < 70:
+            forced_redraw = self._prepare_screen_for_redraw(stdscr)
             stdscr.addnstr(0, 0, "终端太小，至少需要 70x12。", max(1, width - 1))
             stdscr.refresh()
+            if forced_redraw:
+                self._finish_forced_redraw(stdscr)
             return
 
+        if self.video_mode:
+            # 视频模式：不触碰 stdscr（避免 curses 刷新覆盖直写的 ASCII 帧）
+            try:
+                self.draw_video_view(stdscr, height, width)
+            except curses.error:
+                pass
+            return
+
+        forced_redraw = self._prepare_screen_for_redraw(stdscr)
         try:
             if self.detail_mode:
                 self.draw_detail_view(stdscr, height, width)
@@ -1454,11 +1609,11 @@ class BilibiliTUI:
 
             self._hline(stdscr, height - 2, 0, max(1, width - 1), self.attr("border"))
             if self.detail_mode:
-                shortcuts = "j/k 滚动  a 播放/暂停  x 停止  f 收藏  o 浏览器打开  r/c 刷新评论  b 返回  q 退出"
+                shortcuts = "j/k 滚动  V 视频  a 播放/暂停  x 停止  f 收藏  o 浏览器打开  r/c 刷新评论  b 返回  q 退出"
             elif self.mode == "favorites":
-                shortcuts = "j/k 移动  Enter 详情  a 播放/暂停  x 停止  f 取消收藏  o 浏览器打开  c 评论  b 返回  q 退出"
+                shortcuts = "j/k 移动  Enter 详情  y 同步  V 视频  a 播放/暂停  x 停止  f 取消收藏  o 浏览器打开  c 评论  b 返回  q 退出"
             else:
-                shortcuts = "Tab 分区  1-9 直选  / 搜索  a 播放/暂停  x 停止  f 收藏  m 收藏夹  c 评论  Enter 详情  q 退出"
+                shortcuts = "Tab 分区  1-9 直选  / 搜索  V 视频  a 播放/暂停  x 停止  f 收藏  m 收藏夹  c 评论  Enter 详情  q 退出"
             stdscr.addnstr(height - 2, 2, shortcuts, width - 4, self.attr("muted"))
             if self._loading > 0:
                 spinner = SPINNER_FRAMES[self._spinner_index]
@@ -1482,6 +1637,8 @@ class BilibiliTUI:
         except curses.error:
             pass
         stdscr.refresh()
+        if forced_redraw:
+            self._finish_forced_redraw(stdscr)
 
     # ---------- main loop ----------
 
@@ -1512,6 +1669,8 @@ class BilibiliTUI:
             self.toggle_selected_favorite()
         elif key in (ord("c"), ord("r")):
             self.refresh_comments_async()
+        elif key == ord("V"):
+            self.enter_video_mode()
         elif key in (ord("q"), 3):
             return True
         return False
@@ -1601,12 +1760,173 @@ class BilibiliTUI:
                 self.start_load_items()
             else:
                 self.set_status("已经是第一页")
+        elif key == ord("V"):
+            self.enter_video_mode()
+        elif key == ord("y"):
+            self._sync_current_mode_async()
         return False
+
+    # ---------- video mode ----------
+
+    def enter_video_mode(self) -> None:
+        """进入视频播放模式。"""
+        if not vp.has_ffmpeg():
+            self.set_status(vp.ffmpeg_install_hint(), sticky=True)
+            return
+
+        item = self.current_detail_item() if self.detail_mode else self.selected_item
+        if item is None:
+            self.set_status("没有选中视频")
+            return
+
+        self._video_detail_item = item
+        self.video_mode = True
+        self._video_state = "loading"
+        self._video_started_audio = False
+        self._video_player = None
+        self._video_frame = ""
+        self.set_status("正在启动视频播放...", sticky=True)
+
+        def work() -> Any:
+            try:
+                return self.client.video_stream_for_item(item)
+            except Exception as exc:
+                return exc
+
+        def apply(stream: Any) -> None:
+            if not self.video_mode:
+                return  # 用户已退出视频模式，放弃
+            if isinstance(stream, Exception) or stream is None:
+                err_msg = str(stream) if isinstance(stream, Exception) else "无法获取视频流"
+                self._fail_video_mode(f"无法播放视频: {err_msg}")
+                return
+            # 端末サイズは shutil 標準 API で取得：Windows でも動き、
+            # COLUMNS/LINES 環境変数や fallback (80x24) も面倒見てくれる
+            import shutil
+            size = shutil.get_terminal_size((80, 24))
+            usable_cols = size.columns
+            usable_rows = max(5, size.lines)
+            v_cols, v_rows = vp.calc_video_dimensions(usable_cols, usable_rows)
+            try:
+                player = vp.VideoPlayer(
+                    stream,
+                    v_cols,
+                    v_rows,
+                    fps=10,
+                    video_key=item.bvid or (f"av{item.aid}" if item.aid else None),
+                )
+                player.start()
+            except Exception as exc:  # noqa: BLE001 — 播放器启动失败必须回到 TUI
+                self._fail_video_mode(f"无法启动视频: {exc}")
+                return
+            self._video_player = player
+            self._video_frame = ""
+            self._video_state = "playing"
+            try:
+                self.play_selected_audio_for(item)
+                self.set_status("视频播放中 - q/Esc 返回  Space 暂停  x 停止")
+            except Exception as exc:  # noqa: BLE001 — 视频仍可无声播放
+                self.set_status(f"视频播放中（音频启动失败: {exc}）", sticky=True)
+            self._dirty = True
+
+        self._submit(work, apply, "正在加载视频流...")
+
+    def exit_video_mode(self) -> None:
+        """退出视频播放模式，清理资源。"""
+        self._leave_video_mode("已退出视频播放", state="idle", stop_audio=True)
+
+    def _stop_video_player(self) -> None:
+        if self._video_player is not None:
+            self._video_player.stop()
+            self._video_player = None
+
+    def _stop_video_audio(self) -> None:
+        if not self._video_started_audio:
+            return
+        try:
+            audio.stop_audio_playback(silent=True)
+        except Exception:
+            pass
+        self._video_started_audio = False
+
+    def _leave_video_mode(self, message: str, *, state: str, stop_audio: bool) -> None:
+        """退出视频视图，且不让清理过程覆盖最终状态文案。"""
+        self.video_mode = False
+        self._video_state = state
+        self._stop_video_player()
+        if stop_audio:
+            self._stop_video_audio()
+        self._video_frame = ""
+        self._video_detail_item = None
+        # 清屏以便 TUI 重绘
+        import sys
+        sys.stdout.write("\x1b[0m\x1b(B\x1b[2J\x1b[H")
+        sys.stdout.flush()
+        self._force_full_redraw = True
+        self.set_status(message, sticky=state in {"failed"})
+        self._dirty = True
+
+    def _fail_video_mode(self, message: str) -> None:
+        self._leave_video_mode(message, state="failed", stop_audio=True)
+
+    def _finish_video_playback(self, message: str) -> None:
+        if self._video_state == "ended":
+            return
+        self._leave_video_mode(message, state="ended", stop_audio=True)
+
+    def handle_video_key(self, key: int) -> bool:
+        """处理视频模式下的按键。返回 True 表示退出程序。"""
+        import curses
+
+        if key in (3, ord("Q")):  # Ctrl-C / Q → 退出程序
+            self.exit_video_mode()
+            return True
+        elif key in (27, ord("q"), ord("b"), curses.KEY_LEFT, ord("V"), ord("v")):
+            self.exit_video_mode()
+        elif key == ord(" "):
+            if self._video_player is not None:
+                playing = self._video_player.toggle_pause()
+                self._video_state = "playing" if playing else "paused"
+                if self._video_started_audio:
+                    try:
+                        if playing:
+                            audio.resume_audio_playback()
+                        else:
+                            audio.pause_audio_playback()
+                    except Exception as exc:
+                        self.set_status(f"视频已{'继续' if playing else '暂停'}，音频控制失败: {exc}", sticky=True)
+                        return False
+                self.set_status("已暂停" if not playing else "已继续播放")
+        elif key == ord("a"):
+            item = self._video_detail_item
+            if item is not None:
+                try:
+                    message = self.play_selected_audio_for(item)
+                except Exception as exc:
+                    self.set_status(f"音频启动失败: {exc}", sticky=True)
+                else:
+                    self.set_status(message)
+        elif key == ord("x"):
+            self._leave_video_mode("已停止播放", state="ended", stop_audio=True)
+        return False
+
+    def play_selected_audio_for(self, item: VideoItem) -> str:
+        """为指定视频播放音频（绕过 selected_item 检查）。"""
+        message = audio.play_audio_for_item(self.client, item)
+        self._video_started_audio = True
+        self._refresh_audio_state()
+        return message
+
+    # ---------- main loop ----------
 
     def run(self, stdscr: Any) -> None:
         import curses
 
         self.init_theme()
+        try:
+            curses.set_escdelay(ESCDELAY_MS)
+        except (AttributeError, curses.error):
+            pass
         curses.curs_set(0)
         stdscr.keypad(True)
         stdscr.timeout(TICK_MS)
@@ -1629,6 +1949,10 @@ class BilibiliTUI:
                     if key in (ord("?"), ord("q"), 27, 10, 13):
                         self.show_help = False
                     continue
+                if self.video_mode:
+                    if self.handle_video_key(key):
+                        return
+                    continue
                 if self.detail_mode:
                     if self.handle_detail_key(key):
                         return
@@ -1646,4 +1970,9 @@ def run_tui(client: BilibiliClient, history_store: HistoryStore) -> int:
         BilibiliTUI(client, history_store).run(stdscr)
 
     curses.wrapper(_main)
+    # 确保退出 TUI 时停止所有后台音频/视频播放
+    try:
+        audio.stop_audio_playback(silent=True)
+    except Exception:
+        pass
     return 0

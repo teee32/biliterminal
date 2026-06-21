@@ -56,6 +56,7 @@ class AudioStream:
     referer: str
     user_agent: str
     source_kind: str
+    cookie_header: str = ""
 
 
 @dataclass(slots=True)
@@ -68,6 +69,31 @@ class AudioPlaybackState:
     control_pid: int | None = None
     media_path: str | None = None
     ipc_socket: str | None = None
+
+
+@dataclass(slots=True)
+class VideoStream:
+    url: str
+    referer: str
+    user_agent: str
+    width: int
+    height: int
+    frame_rate: str
+    codec: str
+    bandwidth: int
+    source_kind: str  # "dash-video" | "durl"
+    cookie_header: str = ""
+
+
+@dataclass(slots=True)
+class VideoPlaybackState:
+    pid: int | None
+    title: str
+    video_key: str | None
+    playing: bool = True
+    target_cols: int = 80
+    target_rows: int = 24
+    target_fps: int = 10
 
 
 def parse_video_ref(value: str) -> tuple[str, str]:
@@ -112,23 +138,40 @@ def _as_int(value: Any) -> int:
 
 def item_from_payload(payload: dict[str, Any]) -> VideoItem:
     stat = payload.get("stat") or {}
+    cnt_info = payload.get("cnt_info") or {}
     owner = payload.get("owner")
+    upper = payload.get("upper")
     if isinstance(owner, dict):
         author = owner.get("name", "-")
     elif isinstance(owner, str) and owner.strip():
         author = owner.strip()
+    elif isinstance(upper, dict):
+        author = upper.get("name", "-")
     else:
-        author = payload.get("author") or payload.get("owner_name") or payload.get("up_name") or "-"
+        author = (
+            payload.get("author")
+            or payload.get("author_name")
+            or payload.get("owner_name")
+            or payload.get("up_name")
+            or "-"
+        )
     return VideoItem(
         title=strip_html(payload.get("title", "")),
         author=author,
         bvid=payload.get("bvid"),
         aid=payload.get("aid"),
         duration=normalize_duration(payload.get("duration")),
-        play=_as_int(payload.get("play") or stat.get("view")),
-        danmaku=_as_int(payload.get("video_review") or payload.get("danmaku") or stat.get("danmaku")),
+        play=_as_int(payload.get("play") or stat.get("view") or cnt_info.get("play")),
+        danmaku=_as_int(
+            payload.get("video_review")
+            or payload.get("danmaku")
+            or stat.get("danmaku")
+            or cnt_info.get("danmaku")
+        ),
         like=_as_int(payload.get("like") or stat.get("like")),
-        favorite=_as_int(payload.get("favorites") or stat.get("favorite")),
+        favorite=_as_int(
+            payload.get("favorites") or stat.get("favorite") or cnt_info.get("collect")
+        ),
         pubdate=payload.get("pubdate"),
         description=compact_whitespace(payload.get("description") or payload.get("desc") or ""),
         url=build_video_url(payload),
@@ -157,8 +200,9 @@ def video_key_from_payload(payload: dict[str, Any]) -> str | None:
     bvid = payload.get("bvid")
     if bvid:
         return str(bvid)
+    # Bilibili 的 aid 从 1 开始，0 永远是脏数据；用真值判断一并挡掉 None/0/空串
     aid = payload.get("aid")
-    if aid not in (None, ""):
+    if aid:
         return f"av{aid}"
     url = payload.get("url")
     return str(url) if url else None
@@ -169,7 +213,8 @@ def video_key_from_item(item: VideoItem | None) -> str | None:
         return None
     if item.bvid:
         return str(item.bvid)
-    if item.aid is not None:
+    # aid=0 视为无效，避免脏数据生成 "av0" 污染去重集合
+    if item.aid:
         return f"av{item.aid}"
     return str(item.url) if item.url else None
 
