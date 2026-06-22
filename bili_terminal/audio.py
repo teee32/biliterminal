@@ -13,7 +13,7 @@ import urllib.parse
 import urllib.request
 from typing import TYPE_CHECKING, Any
 
-from .models import AudioPlaybackState, AudioStream, BilibiliAPIError, VideoItem, video_key_from_item
+from .models import AudioPlaybackState, AudioStream, BilibiliAPIError, VideoItem, is_trusted_media_host, video_key_from_item
 from .paths import default_state_dir
 from .textutil import truncate_display
 
@@ -440,13 +440,15 @@ def spawn_audio_worker(stream: AudioStream, video_key: str | None) -> int:
     log_path = audio_worker_log_path()
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
     cookie_file = ""
+    # 带时限签名 token 的流地址不放进 argv（任意本地用户 ps 可见），改写入 0600 临时文件
+    url_file = write_private_text_file("biliterminal-url-", stream.url)
     command = [
         sys.executable,
         "-m",
         "bili_terminal",
         "audio-worker",
-        "--url",
-        stream.url,
+        "--url-file",
+        url_file,
         "--referer",
         stream.referer,
         "--user-agent",
@@ -473,11 +475,12 @@ def spawn_audio_worker(stream: AudioStream, video_key: str | None) -> int:
                 env=env,
             )
     except Exception:
-        if cookie_file:
-            try:
-                os.unlink(cookie_file)
-            except OSError:
-                pass
+        for leftover in (cookie_file, url_file):
+            if leftover:
+                try:
+                    os.unlink(leftover)
+                except OSError:
+                    pass
         raise
     return process.pid
 
@@ -522,7 +525,7 @@ def download_audio_to_path(url: str, referer: str, user_agent: str, temp_path: s
             "Accept": "*/*",
             "Referer": referer,
         }
-        if cookie_header:
+        if cookie_header and is_trusted_media_host(url):
             headers["Cookie"] = cookie_header
         request = urllib.request.Request(
             url,

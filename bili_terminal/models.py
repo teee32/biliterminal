@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlparse
 
 from .textutil import compact_whitespace, normalize_duration, strip_html
 
@@ -221,6 +222,35 @@ def video_key_from_item(item: VideoItem | None) -> str | None:
 
 def video_key_from_ref(ref_type: str, value: str) -> str:
     return value if ref_type == "bvid" else f"av{value}"
+
+
+# Bilibili 正片 / 音频流的可信主机后缀。媒体流地址是从远端 HTML 里正则抓取的
+# __playinfo__.baseUrl，必须先校验再附带会话 Cookie，避免凭证被发往任意主机
+# （凭证外泄 / SSRF）。*.bilivideo.com / .cn 是 PCDN，缺了会导致播放中断。
+_TRUSTED_MEDIA_HOST_SUFFIXES = (
+    ".bilibili.com",
+    ".hdslb.com",
+    ".akamaized.net",
+    ".bilivideo.com",
+    ".bilivideo.cn",
+)
+
+
+def is_trusted_media_host(url: str | None) -> bool:
+    """仅当 url 是 https 且主机命中可信后缀时返回 True。"""
+    if not url:
+        return False
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return False
+    if parsed.scheme != "https" or not parsed.hostname:
+        return False
+    host = parsed.hostname.lower()
+    return any(
+        host == suffix.lstrip(".") or host.endswith(suffix)
+        for suffix in _TRUSTED_MEDIA_HOST_SUFFIXES
+    )
 
 
 def comments_from_payload(payload: list[dict[str, Any]]) -> list[CommentItem]:

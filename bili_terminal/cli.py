@@ -86,7 +86,8 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("login", help="登录 Bilibili 账号")
 
     audio_worker_parser = subparsers.add_parser("audio-worker", help=argparse.SUPPRESS)
-    audio_worker_parser.add_argument("--url", required=True, help=argparse.SUPPRESS)
+    audio_worker_parser.add_argument("--url", default="", help=argparse.SUPPRESS)
+    audio_worker_parser.add_argument("--url-file", default="", help=argparse.SUPPRESS)
     audio_worker_parser.add_argument("--referer", required=True, help=argparse.SUPPRESS)
     audio_worker_parser.add_argument("--user-agent", required=True, help=argparse.SUPPRESS)
     audio_worker_parser.add_argument("--title", default="", help=argparse.SUPPRESS)
@@ -257,7 +258,12 @@ def run_once(args: argparse.Namespace, client: BilibiliClient, history_store: Hi
         return run_login(client)
     if args.command == "audio-worker":
         cookie = read_private_text_once(args.cookie_file)
-        return run_audio_worker(args.url, args.referer, args.user_agent, args.title, args.video_key or None, cookie=cookie)
+        # 优先从 0600 临时文件读取签名地址（避免出现在 argv 上），回退到 --url
+        url = read_private_text_once(args.url_file) or args.url
+        if not url:
+            print("错误: audio-worker 缺少 --url-file 或 --url", file=sys.stderr)
+            return 1
+        return run_audio_worker(url, args.referer, args.user_agent, args.title, args.video_key or None, cookie=cookie)
     BilibiliCLI(client, history_store).cmdloop()
     return 0
 
