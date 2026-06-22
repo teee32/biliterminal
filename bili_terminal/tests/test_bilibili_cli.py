@@ -2121,5 +2121,215 @@ class TUIStateTests(unittest.TestCase):
             self.assertIn("暂无可显示热评", rendered)
 
 
+class WbiSignatureTests(unittest.TestCase):
+    """冻结 WBI 签名的输入/输出。打乱 mixin 表、改截断长度、param 排序或
+    sanitize 顺序的回归会让服务端 -403/-352，但旧测试只断言 URL 路径、查不出来。"""
+
+    IMG_KEY = "7cd084941338484aae1ad9425b84077c"
+    SUB_KEY = "4932caff0ff746eab6f01bf08b70ac45"
+
+    def test_mixin_wbi_key_is_32_chars_and_matches_golden(self) -> None:
+        mixed = cli.mixin_wbi_key(self.IMG_KEY, self.SUB_KEY)
+        self.assertEqual(len(mixed), 32)
+        # golden：由当前 COMMENT_WBI_MIXIN_TABLE + [:32] 截断推导，锁住两者
+        self.assertEqual(mixed, "ea1db124af3c7062474693fa704f4ff8")
+
+    def test_sign_wbi_params_produces_exact_wts_and_w_rid(self) -> None:
+        from bili_terminal import client as client_module
+
+        with mock.patch.object(client_module.time, "time", return_value=1700000000.0):
+            signed = cli.sign_wbi_params({"foo": "bar", "baz": "1"}, self.IMG_KEY, self.SUB_KEY)
+        self.assertEqual(signed["wts"], "1700000000")
+        # w_rid = md5(sorted-query + mixin_key)；锁住排序、wts 注入与 md5 拼接顺序
+        self.assertEqual(signed["w_rid"], "0c5f11a238916d4556aeff87fbbca276")
+
+    def test_sign_wbi_params_strips_special_chars_before_signing(self) -> None:
+        from bili_terminal import client as client_module
+
+        with mock.patch.object(client_module.time, "time", return_value=1700000000.0):
+            signed = cli.sign_wbi_params({"q": "a!b'c(d)e*f"}, self.IMG_KEY, self.SUB_KEY)
+        # sanitize 必须在签名前发生，去掉 !'()* 这五个字符
+        self.assertEqual(signed["q"], "abcdef")
+        self.assertEqual(signed["w_rid"], "360049d30a57f161439508f0c4686fd4")
+
+
+class QrEncoderGoldenTests(unittest.TestCase):
+    """二维码是登录主路径。旧测试只查 <svg>/<rect> 是否存在，错误的 ECC/掩码/
+    定位图案都能渲染但手机扫不出。这里做结构校验 + 全量回环解码。"""
+
+    # qr_matrix("AB") 的 golden 输出（v1、纠错级 L、自动选掩码）
+    GOLDEN_AB = [
+        "111111100010101111111", "100000100000101000001", "101110101010001011101",
+        "101110100000101011101", "101110100101101011101", "100000100111001000001",
+        "111111101010101111111", "000000001010000000000", "111011111010111000100",
+        "101100000001010101010", "110101101111011100011", "000110010001110111000",
+        "101010110011011100101", "000000001100001000110", "111111101100100010011",
+        "100000101100001000111", "101110101000101010101", "101110100111010101010",
+        "101110101101011101101", "100000101011110111010", "111111101101011101111",
+    ]
+
+    def _to_str_rows(self, matrix: list) -> list:
+        return ["".join("1" if cell else "0" for cell in row) for row in matrix]
+
+    def test_qr_matrix_matches_golden(self) -> None:
+        matrix = cli.qr_matrix("AB")
+        self.assertEqual(self._to_str_rows(matrix), self.GOLDEN_AB)
+
+    def test_finder_and_timing_patterns_are_well_formed(self) -> None:
+        matrix = cli.qr_matrix("https://passport.bilibili.com/x")
+        n = len(matrix)
+        for top, left in ((0, 0), (0, n - 7), (n - 7, 0)):
+            # 定位图案：中心 3x3 全黑、外环留白、最外圈全黑
+            self.assertTrue(matrix[top + 3][left + 3])
+            self.assertFalse(matrix[top + 1][left + 1])
+            self.assertTrue(matrix[top][left])
+        # 第 6 行时序图案黑白交替
+        self.assertTrue(all(matrix[6][x] == (x % 2 == 0) for x in range(8, n - 8)))
+
+    def test_qr_matrix_round_trips_through_independent_decoder(self) -> None:
+        # 独立解码器：读 format-info 取掩码 -> 反掩码 -> 之字形读 -> byte 模式解码
+        def decode_v1(matrix: list) -> str:
+            n = len(matrix)
+            self.assertEqual(n, 21)
+            seq = [(0, 8), (1, 8), (2, 8), (3, 8), (4, 8), (5, 8), (7, 8), (8, 8),
+                   (8, 7), (8, 5), (8, 4), (8, 3), (8, 2), (8, 1), (8, 0)]
+            raw = 0
+            for i, (y, x) in enumerate(seq):
+                raw |= (1 if matrix[y][x] else 0) << i
+            mask = ((raw ^ 0b101010000010010) >> 10) & 0b111
+
+            def masked(x: int, y: int) -> bool:
+                if mask == 0:
+                    return (x + y) % 2 == 0
+                if mask == 1:
+                    return y % 2 == 0
+                if mask == 2:
+                    return x % 3 == 0
+                if mask == 3:
+                    return (x + y) % 3 == 0
+                if mask == 4:
+                    return (y // 2 + x // 3) % 2 == 0
+                if mask == 5:
+                    return (x * y) % 2 + (x * y) % 3 == 0
+                if mask == 6:
+                    return ((x * y) % 2 + (x * y) % 3) % 2 == 0
+                return ((x + y) % 2 + (x * y) % 3) % 2 == 0
+
+            reserved = [[False] * n for _ in range(n)]
+            for tx, ty in ((0, 0), (n - 7, 0), (0, n - 7)):
+                for dy in range(-1, 8):
+                    for dx in range(-1, 8):
+                        x, y = tx + dx, ty + dy
+                        if 0 <= x < n and 0 <= y < n:
+                            reserved[y][x] = True
+            for i in range(n):
+                reserved[6][i] = True
+                reserved[i][6] = True
+            for i in range(9):
+                reserved[8][i] = True
+                reserved[i][8] = True
+            for i in range(8):
+                reserved[8][n - 1 - i] = True
+                reserved[n - 1 - i][8] = True
+
+            bits = []
+            col = n - 1
+            upward = True
+            while col > 0:
+                if col == 6:
+                    col -= 1
+                for r in range(n):
+                    y = (n - 1 - r) if upward else r
+                    for x in (col, col - 1):
+                        if not reserved[y][x]:
+                            v = bool(matrix[y][x])
+                            if masked(x, y):
+                                v = not v
+                            bits.append(1 if v else 0)
+                col -= 2
+                upward = not upward
+
+            pos = 0
+
+            def take(nbits: int) -> int:
+                nonlocal pos
+                val = 0
+                for _ in range(nbits):
+                    val = (val << 1) | bits[pos]
+                    pos += 1
+                return val
+
+            mode = take(4)
+            self.assertEqual(mode, 0b0100, "should be byte mode")
+            count = take(8)
+            out = bytearray(take(8) for _ in range(count))
+            return out.decode("utf-8")
+
+        # 此内嵌解码器仅覆盖 v1（21x21），故用 <=17 字节的载荷
+        for text in ("AB", "x", "bili-login-7q"):
+            self.assertEqual(decode_v1(cli.qr_matrix(text)), text)
+
+
+class MediaHostTrustTests(unittest.TestCase):
+    """会话 Cookie 只能发往可信媒体主机，避免凭证外泄 / SSRF。"""
+
+    def test_accepts_bilibili_and_cdn_https_hosts(self) -> None:
+        from bili_terminal.models import is_trusted_media_host
+
+        for url in (
+            "https://upos-sz-mirror08c.bilivideo.com/x.m4s",
+            "https://cn-abc.bilivideo.cn/x.m4s",
+            "https://x.akamaized.net/x.m4s",
+            "https://data.hdslb.com/x",
+            "https://www.bilibili.com/x",
+        ):
+            self.assertTrue(is_trusted_media_host(url), url)
+
+    def test_rejects_untrusted_scheme_and_suffix_spoofing(self) -> None:
+        from bili_terminal.models import is_trusted_media_host
+
+        for url in (
+            "http://upos-sz.bilivideo.com/x.m4s",  # 非 https
+            "https://evil.com/x.m4s",
+            "https://bilivideo.com.evil.com/x",  # 后缀伪造
+            "https://notbilibili.com/x",
+            "",
+            None,
+        ):
+            self.assertFalse(is_trusted_media_host(url), url)
+
+
+class AudioWorkerUrlFileTests(unittest.TestCase):
+    """签名流地址带时限 token，不能出现在 argv 上（任意本地用户 ps 可见）。"""
+
+    @mock.patch.object(audio.subprocess, "Popen")
+    def test_spawn_audio_worker_passes_url_file_not_url(self, mock_popen: mock.MagicMock) -> None:
+        process = mock.MagicMock()
+        process.pid = 4321
+        mock_popen.return_value = process
+        signed_url = "https://upos-sz.bilivideo.com/x.m4s?ticket=SECRETTOKEN"
+        stream = cli.AudioStream(
+            title="标题",
+            url=signed_url,
+            referer="https://www.bilibili.com/video/BV1",
+            user_agent="UA",
+            source_kind="dash-audio",
+            cookie_header="",
+        )
+        cli.spawn_audio_worker(stream, "BV1xx411c7mu")
+        command = mock_popen.call_args.args[0]
+        joined = " ".join(command)
+        self.assertIn("--url-file", command)
+        self.assertNotIn("--url", command)
+        self.assertNotIn("SECRETTOKEN", joined)
+        url_path = command[command.index("--url-file") + 1]
+        try:
+            self.assertEqual(stat.S_IMODE(os.stat(url_path).st_mode), 0o600)
+            self.assertEqual(cli.read_private_text_once(url_path), signed_url)
+        finally:
+            if os.path.exists(url_path):
+                os.unlink(url_path)
+
+
 if __name__ == "__main__":
     unittest.main()

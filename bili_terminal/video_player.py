@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from .models import VideoStream, VideoItem
 
 # 运行时需要真实类型用于 except 匹配（不能放进 TYPE_CHECKING）
-from .models import BilibiliAPIError
+from .models import BilibiliAPIError, is_trusted_media_host
 
 # ── 视频播放日志 ──────────────────────────────────────────────
 
@@ -371,8 +371,9 @@ class StreamFeeder:
             "User-Agent": self._stream.user_agent,
             "Accept": "*/*",
         }
-        # 空 Cookie ヘッダは bilibili に弾かれる可能性があるので未ログイン時は付けない
-        if self._stream.cookie_header:
+        # 空 Cookie ヘッダは bilibili に弾かれる可能性があるので未ログイン時は付けない。
+        # 同时仅在地址命中可信媒体主机时才附带会话 Cookie，避免凭证被发往任意主机。
+        if self._stream.cookie_header and is_trusted_media_host(self._stream.url):
             headers["Cookie"] = self._stream.cookie_header
         request = urllib.request.Request(self._stream.url, headers=headers)
         try:

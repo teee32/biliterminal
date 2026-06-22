@@ -1964,7 +1964,25 @@ class BilibiliTUI:
 
 
 def run_tui(client: BilibiliClient, history_store: HistoryStore) -> int:
-    import curses
+    # ncursesw 需要在 initscr 之前设置好 locale，否则在 LANG 未设置或为
+    # C/POSIX 的环境（Docker、CI、裸 ssh）下中文会渲染成乱码或 "?"。
+    import locale
+    import sys
+
+    try:
+        locale.setlocale(locale.LC_ALL, "")
+    except locale.Error:
+        pass
+
+    try:
+        import curses
+    except ImportError:
+        print(
+            "TUI 需要 curses 模块。Windows 请先安装 windows-curses"
+            "（pip install windows-curses），或改用非交互子命令。",
+            file=sys.stderr,
+        )
+        return 1
 
     def _main(stdscr: Any) -> None:
         BilibiliTUI(client, history_store).run(stdscr)
